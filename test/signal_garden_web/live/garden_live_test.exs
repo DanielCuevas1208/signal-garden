@@ -28,6 +28,28 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert render(snapshot) =~ "svg"
   end
 
+  test "export and import controls are present", %{conn: conn} do
+    {:ok, _view, html} = live(conn, ~p"/")
+    assert html =~ "Export JSON"
+    assert html =~ "Import JSON"
+  end
+
+  test "importing a scenario file loads it into the engine", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "ring.json"])
+    json = File.read!(path)
+
+    view |> render_click("toggle_import")
+
+    view
+    |> form("#sg-form-import", %{json: json})
+    |> render_submit()
+
+    snapshot = SignalGarden.Sim.snapshot()
+    assert snapshot.scenario.name == "Ring"
+    assert snapshot.total == 12
+  end
+
   test "the Run button starts the loop and Step advances the clock", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

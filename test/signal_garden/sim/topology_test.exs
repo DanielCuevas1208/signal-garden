@@ -51,4 +51,20 @@ defmodule SignalGarden.Sim.TopologyTest do
       assert y >= 0.0 and y <= 1.0
     end
   end
+
+  test "from_export rebuilds a topology from JSON data" do
+    source = Topology.ring(5)
+    data = %{
+      "id" => "ring",
+      "label" => "ring",
+      "nodes" => source.nodes,
+      "edges" => Enum.map(source.edges, fn {a, b} -> [a, b] end),
+      "layout" =>
+        Map.new(source.layout, fn {k, {x, y}} -> {Integer.to_string(k), [x, y]} end)
+    }
+
+    assert {:ok, topo} = Topology.from_export(data)
+    assert topo.nodes == source.nodes
+    assert topo.edges == source.edges
+  end
 end

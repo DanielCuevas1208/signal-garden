@@ -305,6 +305,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :show_import, :boolean, required: true
+  attr :import_json, :string, required: true
 
   def side_panel(assigns) do
     ~H"""
@@ -316,6 +318,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         delay_value={@delay_value}
         drop_value={@drop_value}
         speed={@speed}
+        show_import={@show_import}
+        import_json={@import_json}
       />
       <.stats snapshot={@snapshot} />
       <.event_log snapshot={@snapshot} />
@@ -329,6 +333,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :show_import, :boolean, required: true
+  attr :import_json, :string, required: true
 
   def controls(assigns) do
     ~H"""
@@ -359,6 +365,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
       <.form for={nil} id="sg-form-scenario" phx-change="select_scenario" class="sg-form">
         <label class="sg-form__label" for="sg-scenario">Scenario</label>
+        <%= if @selected == :imported do %>
+          <p class="sg-form__note">
+            Loaded file: <strong>{@snapshot.scenario.name}</strong>
+          </p>
+        <% end %>
         <select name="scenario" id="sg-scenario" class="sg-select">
           <%= for option <- @scenarios do %>
             <option value={option.id} selected={option.id == @selected}>
@@ -423,6 +434,31 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         Click a node to toggle its partition group. Click
         <button class="sg-link" phx-click="merge" type="button">heal</button>
         to merge all groups.
+      </div>
+
+      <div class="sg-share">
+        <div class="sg-share__row">
+          <button class="sg-btn sg-btn--ghost" type="button" phx-click="export_scenario">
+            Export JSON
+          </button>
+          <button class="sg-btn sg-btn--ghost" type="button" phx-click="toggle_import">
+            {if @show_import, do: "Hide import", else: "Import JSON"}
+          </button>
+        </div>
+
+        <%= if @show_import do %>
+          <.form for={nil} id="sg-form-import" phx-submit="import_scenario" class="sg-form sg-import">
+            <label class="sg-form__label" for="sg-import-json">Scenario JSON</label>
+            <textarea
+              id="sg-import-json"
+              name="json"
+              class="sg-textarea"
+              rows="8"
+              placeholder="Paste a scenario file or open priv/scenarios/ring.json"
+            >{@import_json}</textarea>
+            <button class="sg-btn sg-btn--solid sg-import__submit" type="submit">Load file</button>
+          </.form>
+        <% end %>
       </div>
     </section>
     """
