@@ -1,0 +1,39 @@
+<Layouts.app flash={@flash}>
+  <div class="sg-room">
+    <header class="sg-room__header">
+      <div class="sg-brand">
+        <span class="sg-brand__mark" aria-hidden="true"></span>
+        <div>
+          <h1 class="sg-brand__title">Signal Garden</h1>
+          <p class="sg-brand__subtitle">
+            A deterministic gossip simulator. A rumor crosses a network that
+            delays, loses, and partitions itself.
+          </p>
+        </div>
+      </div>
+
+      <div class="sg-status">
+        <span class={"sg-status__pill #{SignalGardenWeb.GardenLiveHTML.status_tone(@snapshot.status)}"}>
+          <span class="sg-status__dot"></span>
+          {SignalGardenWeb.GardenLiveHTML.status_label(@snapshot.status)}
+        </span>
+        <span class="sg-status__meta">
+          logical time
+          <strong>{SignalGardenWeb.GardenLiveHTML.format_time(@snapshot.clock)}</strong>
+        </span>
+      </div>
+    </header>
+
+    <section class="sg-grid">
+      <.graph_panel snapshot={@snapshot} canvas={@canvas} />
+      <.side_panel
+        snapshot={@snapshot}
+        scenarios={@scenarios}
+        selected={@selected_scenario}
+        delay_value={@delay_value}
+        drop_value={@drop_value}
+        speed={@speed}
+      />
+    </section>
+  </div>
+</Layouts.app>
