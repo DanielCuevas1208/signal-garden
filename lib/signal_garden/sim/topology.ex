@@ -57,6 +57,25 @@ defmodule SignalGarden.Sim.Topology do
   end
 
   @doc """
+  Rebuild a topology from exported JSON data.
+
+  The map must include `nodes`, `edges`, and `layout`. Optional `id` and
+  `label` fields restore metadata for the control room.
+  """
+  def from_export(%{"nodes" => nodes, "edges" => edges, "layout" => layout} = data)
+      when is_list(nodes) and is_list(edges) and is_map(layout) do
+    with {:ok, parsed_nodes} <- parse_node_list(nodes),
+         {:ok, parsed_edges} <- parse_edge_list(edges),
+         {:ok, parsed_layout} <- parse_layout(layout, parsed_nodes) do
+      id = parse_topology_id(data["id"])
+      label = if is_binary(data["label"]), do: data["label"], else: "custom"
+      {:ok, build(id, label, parsed_nodes, parsed_edges, parsed_layout)}
+    end
+  end
+
+  def from_export(_), do: {:error, {:invalid_field, "topology"}}
+
+  @doc """
   A random graph of `n` nodes with a target average degree.
 
   The edge set is deterministic for a given seed. The graph stays connected
@@ -75,6 +94,71 @@ defmodule SignalGarden.Sim.Topology do
   # ---------------------------------------------------------------------------
   # construction helpers
   # ---------------------------------------------------------------------------
+
+  defp parse_topology_id(nil), do: :custom
+
+  defp parse_topology_id(id) when is_binary(id) do
+    try do
+      String.to_existing_atom(id)
+    rescue
+      ArgumentError -> :custom
+    end
+  end
+
+  defp parse_node_list(nodes) do
+    parsed = Enum.map(nodes, &parse_node_id/1)
+
+    if Enum.all?(parsed, &is_integer/1) do
+      {:ok, Enum.sort(parsed)}
+    else
+      {:error, {:invalid_field, "topology.nodes"}}
+    end
+  end
+
+  defp parse_edge_list(edges) do
+    parsed =
+      Enum.map(edges, fn
+        [a, b] -> {parse_node_id(a), parse_node_id(b)}
+        {a, b} -> {parse_node_id(a), parse_node_id(b)}
+        _ -> :invalid
+      end)
+
+    if Enum.all?(parsed, &match?({_, _}, &1)) do
+      {:ok, parsed}
+    else
+      {:error, {:invalid_field, "topology.edges"}}
+    end
+  end
+
+  defp parse_layout(layout, nodes) do
+    parsed =
+      Enum.reduce(layout, %{}, fn {key, coords}, acc ->
+        case {parse_node_id(key), coords} do
+          {id, [x, y]} when is_number(x) and is_number(y) ->
+            Map.put(acc, id, {x * 1.0, y * 1.0})
+
+          _ ->
+            :invalid
+        end
+      end)
+
+    cond do
+      parsed == :invalid -> {:error, {:invalid_field, "topology.layout"}}
+      MapSet.new(nodes) != MapSet.new(Map.keys(parsed)) -> {:error, {:invalid_field, "topology.layout"}}
+      true -> {:ok, parsed}
+    end
+  end
+
+  defp parse_node_id(value) when is_integer(value), do: value
+
+  defp parse_node_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> n
+      _ -> :invalid
+    end
+  end
+
+  defp parse_node_id(_), do: :invalid
 
   defp build(id, label, nodes, edges, layout) do
     adjacency =

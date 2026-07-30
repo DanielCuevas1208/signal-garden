@@ -24,12 +24,13 @@ Signal Garden separates the deterministic core from the live interface.
 ```
 lib/signal_garden/
   sim/
-    core.ex      # Pure, side-effect-free state machine. Owns the event queue.
-    engine.ex    # GenServer that drives the core and broadcasts snapshots.
-    scenario.ex  # Data shape for one run: topology, seed, faults, conditions.
-    topology.ex  # Builds line, ring, grid, complete, and random graphs.
-  scenarios.ex   # The built-in catalog of scenarios.
-  sim.ex         # Thin facade the LiveView calls.
+    core.ex           # Pure, side-effect-free state machine. Owns the event queue.
+    engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
+    scenario_codec.ex # JSON import and export for scenarios.
+    topology.ex       # Builds line, ring, grid, complete, and random graphs.
+  scenarios.ex        # The built-in catalog of scenarios.
+  sim.ex              # Thin facade the LiveView calls.
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
@@ -70,6 +71,25 @@ http://localhost:4000
 Press **Run** to start the loop. Press **Step** to advance a fixed number of
 events. Click a node to toggle its partition group. Drag the sliders to change
 delay, loss rate, and speed. Pick a scenario from the list to load a new run.
+
+Use **Export JSON** to download the active scenario. Use **Import JSON** to
+paste a file and load it into the control room. A sample file ships at
+`priv/scenarios/ring.json`.
+
+## Scenario files
+
+A scenario file is versioned JSON. It carries the topology, the seed, the fault
+schedule, and every network parameter. Two machines can share one file and
+replay the same run.
+
+Export a scenario from the control room, or build a file by hand. The format
+requires `format: 1` and a `topology` block with `nodes`, `edges`, and
+`layout`. Load a file in the browser or decode it in tests:
+
+```
+alias SignalGarden.Sim.ScenarioCodec
+{:ok, scenario} = File.read!("priv/scenarios/ring.json") |> ScenarioCodec.decode()
+```
 
 ## Built-in scenarios
 
@@ -138,8 +158,9 @@ Run the full suite:
 mix test
 ```
 
-The suite has 31 tests. It covers the deterministic core, the topology
-builder, the scenario catalog, the engine GenServer, and the LiveView.
+The suite has 40 tests. It covers the deterministic core, the topology
+builder, the scenario codec, the scenario catalog, the engine GenServer, and
+the LiveView.
 Tests never sleep and never read the wall clock. Each core test replays a
 scenario and asserts on the resulting state.
 
@@ -157,12 +178,13 @@ mix precommit
 - The engine runs one scenario at a time inside a single GenServer.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
+- Imported scenarios use a custom topology. They do not appear in the catalog list.
 
 ## Roadmap
 
 Later releases can build on this core without changing the model.
 
-- **Scenario import and export.** Load a scenario from JSON and replay it.
+- **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Kill nodes mid-run and watch the network recover.
 - **Counters and CRDTs.** Swap the rumor for a grow-only counter.
 - **Headless replay tool.** Run a scenario from the CLI and print a trace.

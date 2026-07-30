@@ -34,6 +34,8 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
       |> assign(:speed, 6)
+      |> assign(:show_import, false)
+      |> assign(:import_json, "")
 
     {:ok, socket}
   end
@@ -106,6 +108,40 @@ defmodule SignalGardenWeb.GardenLive do
     Sim.merge()
     {:noreply, socket}
   end
+
+  def handle_event("export_scenario", _params, socket) do
+    json = Sim.export_scenario()
+    id = socket.assigns.snapshot.scenario.id
+    filename = "#{id}-scenario.json"
+
+    {:noreply, push_event(socket, "download_scenario", %{content: json, filename: filename})}
+  end
+
+  def handle_event("toggle_import", _params, socket) do
+    {:noreply, assign(socket, :show_import, not socket.assigns.show_import)}
+  end
+
+  def handle_event("import_scenario", %{"json" => json}, socket) do
+    case Sim.import_scenario(String.trim(json)) do
+      {:ok, snapshot} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Scenario \"#{snapshot.scenario.name}\" loaded.")
+         |> assign(:show_import, false)
+         |> assign(:import_json, "")
+         |> sync_controls(snapshot)}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, import_error(reason))}
+    end
+  end
+
+  defp import_error({:invalid_json, _}), do: "The file is not valid JSON."
+  defp import_error({:unsupported_format, version}), do: "Format version #{version} is not supported."
+  defp import_error({:invalid_field, field}), do: "The field \"#{field}\" is invalid."
+  defp import_error({:invalid_origin, origin}), do: "Origin node #{origin} is not in the topology."
+  defp import_error(:missing_format), do: "The file is missing a format version."
+  defp import_error(_), do: "The scenario file could not be loaded."
 
   # ---------------------------------------------------------------------------
   # helpers

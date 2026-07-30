@@ -14,6 +14,7 @@ defmodule SignalGarden.Sim.Engine do
 
   alias SignalGarden.Sim.Core
   alias SignalGarden.Scenarios
+  alias SignalGarden.Sim.ScenarioCodec
 
   @topic "signal_garden:sim"
 
@@ -32,7 +33,9 @@ defmodule SignalGarden.Sim.Engine do
   end
 
   def snapshot, do: GenServer.call(__MODULE__, :snapshot)
+  def export_scenario, do: GenServer.call(__MODULE__, :export_scenario)
   def load_scenario(id), do: GenServer.call(__MODULE__, {:load_scenario, id})
+  def load_scenario_struct(scenario), do: GenServer.call(__MODULE__, {:load_scenario_struct, scenario})
   def start_run, do: GenServer.cast(__MODULE__, :start_run)
   def pause, do: GenServer.cast(__MODULE__, :pause)
   def step(count \\ 1), do: GenServer.cast(__MODULE__, {:step, count})
@@ -71,6 +74,18 @@ defmodule SignalGarden.Sim.Engine do
   @impl true
   def handle_call(:snapshot, _from, state) do
     {:reply, Core.snapshot(state.core), state}
+  end
+
+  @impl true
+  def handle_call(:export_scenario, _from, state) do
+    {:reply, ScenarioCodec.encode(state.core.scenario), state}
+  end
+
+  @impl true
+  def handle_call({:load_scenario_struct, scenario}, _from, state) do
+    new_state = load_scenario_data_into(state, scenario)
+    broadcast(new_state)
+    {:reply, Core.snapshot(new_state.core), new_state}
   end
 
   @impl true
@@ -191,6 +206,10 @@ defmodule SignalGarden.Sim.Engine do
 
   defp load_scenario_into(state, id) do
     scenario = Scenarios.fetch(id) || Scenarios.fetch(:line)
+    load_scenario_data_into(state, scenario)
+  end
+
+  defp load_scenario_data_into(state, scenario) do
     %{state | core: Core.new(scenario), loop_ref: cancel_loop(state.loop_ref)}
   end
 

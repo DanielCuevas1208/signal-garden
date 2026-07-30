@@ -19,6 +19,19 @@ defmodule SignalGarden.Sim do
   @doc "Load a scenario by id, replacing the current run."
   def load_scenario(id), do: Engine.load_scenario(id)
 
+  @doc "Load a scenario struct, replacing the current run."
+  def load_scenario_struct(scenario), do: Engine.load_scenario_struct(scenario)
+
+  @doc "Export the current scenario as pretty-printed JSON."
+  def export_scenario, do: Engine.export_scenario()
+
+  @doc "Decode JSON and load the scenario into the engine."
+  def import_scenario(json) do
+    with {:ok, scenario} <- SignalGarden.Sim.ScenarioCodec.decode(json) do
+      {:ok, load_scenario_struct(scenario)}
+    end
+  end
+
   @doc "Start the animation loop if the core is idle or paused."
   def start_run, do: Engine.start_run()
 
