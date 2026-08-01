@@ -1,13 +1,13 @@
 # Signal Garden
 
-Signal Garden is an interactive simulator for distributed systems. It makes
-message delay, network partitions, retries, and eventual convergence visible
-and reproducible in a browser. A deterministic gossip network runs in
-Elixir, and a Phoenix LiveView control room draws the rumor as it spreads.
+Signal Garden is an interactive distributed-systems simulator. It shows message
+delay, network partitions, retries, and eventual convergence in a browser.
+A deterministic gossip network runs in Elixir. A Phoenix LiveView control room
+shows the message as it spreads.
 
-The same scenario always produces the same event trace, the same convergence
-time, and the same history. Two runs that share a seed are byte-for-byte
-identical, so a fault you see on one machine is a fault anyone can replay.
+The same scenario always produces the same event trace, convergence time, and
+history. Two runs with the same seed produce the same bytes. Anyone can replay
+the same fault on another machine.
 
 ## What it shows
 
