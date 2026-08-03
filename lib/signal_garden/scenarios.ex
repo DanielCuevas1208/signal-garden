@@ -19,7 +19,8 @@ defmodule SignalGarden.Scenarios do
       random(),
       split(),
       churn(),
-      lossy()
+      lossy(),
+      crash()
     ]
   end
 
@@ -93,6 +94,30 @@ defmodule SignalGarden.Scenarios do
       delay_ms: {30, 65},
       drop_prob: 0.0,
       gossip_interval_ms: 75
+    }
+  end
+
+  @doc "A random graph where a pair of nodes crash and restart mid-run."
+  def crash do
+    topology = Topology.random(12, 3, 11)
+
+    %Scenario{
+      id: :crash,
+      name: "Crash and recover",
+      description: "Two nodes crash at T=500, then restart at T=1500.",
+      seed: 11,
+      topology: topology,
+      origin: 1,
+      latest_value: 44,
+      delay_ms: {25, 55},
+      drop_prob: 0.0,
+      gossip_interval_ms: 75,
+      fault_schedule: [
+        %{at: 500, action: {:crash, 4}, label: "Node 4 crashes"},
+        %{at: 700, action: {:crash, 9}, label: "Node 9 crashes"},
+        %{at: 1500, action: {:restart, 4}, label: "Node 4 restarts"},
+        %{at: 1700, action: {:restart, 9}, label: "Node 9 restarts"}
+      ]
     }
   end
 

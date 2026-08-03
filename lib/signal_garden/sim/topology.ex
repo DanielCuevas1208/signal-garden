@@ -143,9 +143,14 @@ defmodule SignalGarden.Sim.Topology do
       end)
 
     cond do
-      parsed == :invalid -> {:error, {:invalid_field, "topology.layout"}}
-      MapSet.new(nodes) != MapSet.new(Map.keys(parsed)) -> {:error, {:invalid_field, "topology.layout"}}
-      true -> {:ok, parsed}
+      parsed == :invalid ->
+        {:error, {:invalid_field, "topology.layout"}}
+
+      MapSet.new(nodes) != MapSet.new(Map.keys(parsed)) ->
+        {:error, {:invalid_field, "topology.layout"}}
+
+      true ->
+        {:ok, parsed}
     end
   end
 

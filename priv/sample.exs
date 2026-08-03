@@ -76,3 +76,27 @@ IO.puts("")
 IO.puts("ring determinism: convergence_time equal = #{a.convergence_time == b.convergence_time}")
 IO.puts("ring determinism: history equal          = #{a.history == b.history}")
 IO.puts("ring determinism: event_log equal        = #{a.event_log == b.event_log}")
+
+# Determinism check: the crash scenario must replay to the same state.
+crash = fn ->
+  Scenarios.fetch(:crash)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+c = crash.()
+d = crash.()
+
+IO.puts("crash determinism: convergence_time equal = #{c.convergence_time == d.convergence_time}")
+IO.puts("crash determinism: event_log equal        = #{c.event_log == d.event_log}")

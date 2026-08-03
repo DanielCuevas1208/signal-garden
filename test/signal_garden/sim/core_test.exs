@@ -36,6 +36,86 @@ defmodule SignalGarden.Sim.CoreTest do
   end
 
   # ---------------------------------------------------------------------------
+  # crash and restart
+  # ---------------------------------------------------------------------------
+
+  test "crashing a node drops its knowledge and stops its gossip" do
+    state = Core.new(Scenarios.fetch(:line))
+    state = Core.command(state, {:crash, 2})
+
+    assert state.nodes[2].up == false
+    assert state.nodes[2].informed == false
+    assert get_in(state.nodes, [2, :known, state.origin]).version == 0
+    refute 2 in state.informed
+  end
+
+  test "restarting a node brings it back with empty state and reschedules gossip" do
+    state = Core.new(Scenarios.fetch(:line))
+    state = Core.command(state, {:crash, 2})
+    state = Core.command(state, {:restart, 2})
+
+    assert state.nodes[2].up == true
+    assert state.nodes[2].informed == false
+    assert get_in(state.nodes, [2, :known, state.origin]).version == 0
+
+    assert Enum.any?(state.queue, fn
+             {_, _, {:gossip, 2}} -> true
+             _ -> false
+           end)
+  end
+
+  test "a permanently crashed node blocks convergence" do
+    scenario = Scenarios.fetch(:ring)
+    state = Core.new(scenario)
+    {state, _} = Core.step(state, 200)
+    assert 7 in state.informed
+
+    state = Core.command(state, {:crash, 7})
+    state = step_n(state, 4_000)
+
+    refute state.status == :converged
+    refute 7 in state.informed
+    assert state.nodes[7].up == false
+  end
+
+  test "crashing then restarting lets the network converge again" do
+    scenario = Scenarios.fetch(:ring)
+
+    state =
+      Core.new(scenario)
+      |> step_n(200)
+      |> Core.command({:crash, 7})
+      |> Core.command({:crash, 8})
+      |> Core.command({:restart, 7})
+      |> Core.command({:restart, 8})
+      |> run_to_converge()
+
+    assert state.status == :converged
+    assert state.nodes[7].up == true
+    assert state.nodes[8].up == true
+    assert 7 in state.informed
+    assert 8 in state.informed
+  end
+
+  test "crash and restart faults appear in the event log" do
+    state = Core.new(Scenarios.fetch(:ring))
+    state = Core.command(state, {:crash, 7})
+    assert :crashed in Enum.map(state.event_log, & &1.kind)
+
+    state = Core.command(state, {:restart, 7})
+    assert :restarted in Enum.map(state.event_log, & &1.kind)
+  end
+
+  test "the crash scenario replays to the same trace" do
+    a = run_to_completion(:crash)
+    b = run_to_completion(:crash)
+
+    assert a.convergence_time == b.convergence_time
+    assert a.event_log == b.event_log
+    assert a.history == b.history
+  end
+
+  # ---------------------------------------------------------------------------
   # convergence
   # ---------------------------------------------------------------------------
 

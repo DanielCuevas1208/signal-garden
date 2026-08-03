@@ -47,10 +47,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   def node_radius, do: 15
 
+  def node_palette(%{up: false}), do: %{fill: "#3f1217", ring: "#fb7185"}
   def node_palette(%{informed: true, is_origin: true}), do: %{fill: "#fbbf24", ring: "#f59e0b"}
   def node_palette(%{informed: true}), do: %{fill: "#34d399", ring: "#10b981"}
   def node_palette(%{is_origin: true}), do: %{fill: "#1e293b", ring: "#f59e0b"}
   def node_palette(_), do: %{fill: "#1e293b", ring: "#475569"}
+
+  def node_class_dash(%{up: false}), do: "6 6"
+  def node_class_dash(%{partition: partition}) when partition != 0, do: "4 4"
+  def node_class_dash(_), do: ""
 
   def edge_stroke(edge, clock) do
     recent = recent?(clock, edge.last_time)
@@ -131,6 +136,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :deliver -> "text-cyan-300"
       :dropped_partition -> "text-amber-300"
       :dropped_loss -> "text-rose-300"
+      :crashed -> "text-rose-400"
+      :restarted -> "text-emerald-300"
       _ -> "text-slate-300"
     end
   end
@@ -138,6 +145,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:deliver), do: "delivered"
   def log_label(:dropped_partition), do: "dropped (partition)"
   def log_label(:dropped_loss), do: "dropped (loss)"
+  def log_label(:crashed), do: "crashed"
+  def log_label(:restarted), do: "restarted"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -160,6 +169,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--split"></i>partitioned</span>
+          <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
           {@snapshot.reached}/{@snapshot.total} nodes know the latest value
@@ -226,7 +236,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                     fill={node_palette(node).fill}
                     stroke={node_palette(node).ring}
                     stroke-width={if(node.partition != 0, do: 2.5, else: 1.6)}
-                    stroke-dasharray={if(node.partition != 0, do: "4 4", else: "")}
+                    stroke-dasharray={node_class_dash(node)}
                   />
                   <%= if node.is_origin do %>
                     <circle
@@ -234,6 +244,22 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       cy={px(node.id, sg, :y)}
                       r={node_radius() + 6}
                       class="sg-node__origin"
+                    />
+                  <% end %>
+                  <%= if not node.up do %>
+                    <line
+                      x1={px(node.id, sg, :x) - 5}
+                      y1={px(node.id, sg, :y) - 5}
+                      x2={px(node.id, sg, :x) + 5}
+                      y2={px(node.id, sg, :y) + 5}
+                      class="sg-node__down"
+                    />
+                    <line
+                      x1={px(node.id, sg, :x) + 5}
+                      y1={px(node.id, sg, :y) - 5}
+                      x2={px(node.id, sg, :x) - 5}
+                      y2={px(node.id, sg, :y) + 5}
+                      class="sg-node__down"
                     />
                   <% end %>
                   <text
@@ -305,6 +331,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :fault_node, :any, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -318,6 +345,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         delay_value={@delay_value}
         drop_value={@drop_value}
         speed={@speed}
+        fault_node={@fault_node}
         show_import={@show_import}
         import_json={@import_json}
       />
@@ -333,6 +361,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :fault_node, :any, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -430,6 +459,40 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         />
       </.form>
 
+      <div class="sg-faults">
+        <div class="sg-faults__head">Node fault</div>
+        <.form for={nil} id="sg-form-fault" phx-change="select_fault_node" class="sg-faults__form">
+          <div class="sg-faults__row">
+            <select id="sg-fault-node" name="node" class="sg-faults__select">
+              <%= for node <- @snapshot.nodes do %>
+                <option value={node.id} selected={node.id == @fault_node}>
+                  {node.id} {if node.up, do: "(up)", else: "(down)"}
+                </option>
+              <% end %>
+            </select>
+            <button
+              class="sg-btn sg-btn--fault"
+              type="button"
+              phx-click="crash"
+              phx-value-node={@fault_node}
+            >
+              Crash
+            </button>
+            <button
+              class="sg-btn sg-btn--heal"
+              type="button"
+              phx-click="restart"
+              phx-value-node={@fault_node}
+            >
+              Restart
+            </button>
+          </div>
+        </.form>
+        <p class="sg-faults__note">
+          Pick a node, then crash or restart it while the run is active.
+        </p>
+      </div>
+
       <div class="sg-controls__hint">
         Click a node to toggle its partition group. Click
         <button class="sg-link" phx-click="merge" type="button">heal</button>
@@ -509,7 +572,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <li class="sg-log__row">
                 <span class="sg-log__time">T={entry.t}</span>
                 <span class={"sg-log__kind #{log_tone(entry.kind)}"}>
-                  {entry.from} -> {entry.to} {log_label(entry.kind)}
+                  <%= if entry.to do %>
+                    {entry.from} -> {entry.to} {log_label(entry.kind)}
+                  <% else %>
+                    node {entry.from} {log_label(entry.kind)}
+                  <% end %>
                 </span>
               </li>
             <% end %>

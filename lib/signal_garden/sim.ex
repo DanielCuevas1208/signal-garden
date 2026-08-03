@@ -62,6 +62,12 @@ defmodule SignalGarden.Sim do
   @doc "Toggle a node between group zero and group one."
   def toggle_partition(node), do: Engine.toggle_partition(node)
 
+  @doc "Take a node out of service until it is restarted."
+  def crash(node), do: Engine.crash(node)
+
+  @doc "Return a crashed node to service."
+  def restart(node), do: Engine.restart(node)
+
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
 end

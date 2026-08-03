@@ -21,6 +21,11 @@ defmodule SignalGarden.Sim.Core do
     * partition - a message that crosses a partition boundary is dropped
     * loss - a fair die roll drops a fixed fraction of messages
 
+  A node can also crash. A crashed node stops gossiping, forgets what it
+  knew, and drops the deliveries that arrive while it is down. Restarting
+  the node brings it back with empty state so it must re-learn the value
+  from its neighbours.
+
   The engine records every cross-hazard send in an event log so the
   interface can show what the network did to the signal.
 
@@ -123,6 +128,7 @@ defmodule SignalGarden.Sim.Core do
 
       Map.put(acc, id, %{
         id: id,
+        up: true,
         known: known,
         neighbors: Map.get(topology.adjacency, id, []),
         informed: id == origin
@@ -183,6 +189,14 @@ defmodule SignalGarden.Sim.Core do
     %{state | partitions: %{}}
   end
 
+  def command(%__MODULE__{} = state, {:crash, node}) when is_integer(node) do
+    crash_node(state, node)
+  end
+
+  def command(%__MODULE__{} = state, {:restart, node}) when is_integer(node) do
+    restart_node(state, node)
+  end
+
   def command(%__MODULE__{} = state, {:toggle_partition, node}) do
     current = Map.get(state.partitions, node, 0)
     next = if current == 0, do: 1, else: 0
@@ -200,6 +214,50 @@ defmodule SignalGarden.Sim.Core do
   end
 
   def command(%__MODULE__{} = state, _unknown), do: state
+
+  # ---------------------------------------------------------------------------
+  # crash / restart
+  # ---------------------------------------------------------------------------
+
+  defp crash_node(%__MODULE__{} = state, node) do
+    nodes = put_in(state.nodes, [node, :up], false)
+    nodes = put_in(nodes, [node, :informed], false)
+    nodes = put_in(nodes, [node, :known], %{state.origin => %{version: 0, value: nil}})
+
+    state = %{
+      state
+      | nodes: nodes,
+        informed: MapSet.delete(state.informed, node)
+    }
+
+    log_fault(state, :crashed, node)
+  end
+
+  defp restart_node(%__MODULE__{} = state, node) do
+    nodes = put_in(state.nodes, [node, :up], true)
+    nodes = put_in(nodes, [node, :informed], false)
+    nodes = put_in(nodes, [node, :known], %{state.origin => %{version: 0, value: nil}})
+
+    state = %{state | nodes: nodes}
+
+    state
+    |> log_fault(:restarted, node)
+    |> push_event(state.clock + 1, {:gossip, node})
+  end
+
+  defp log_fault(%__MODULE__{} = state, kind, node) do
+    entry = %{
+      t: state.clock,
+      kind: kind,
+      from: node,
+      to: nil,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
 
   # ---------------------------------------------------------------------------
   # stepping
@@ -242,36 +300,45 @@ defmodule SignalGarden.Sim.Core do
   defp handle_event(%__MODULE__{} = state, {:gossip, id}) do
     node = state.nodes[id]
 
-    state
-    |> forward_rumor(node)
-    |> reschedule_gossip(id)
+    if node.up do
+      state
+      |> forward_rumor(node)
+      |> reschedule_gossip(id)
+    else
+      state
+    end
   end
 
   defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
     node = state.nodes[to]
-    current = Map.get(node.known, state.origin, %{version: 0, value: nil})
 
-    state =
-      if payload.version > current.version do
-        nodes =
-          put_in(state.nodes, [to, :known], Map.put(node.known, state.origin, payload))
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = Map.get(node.known, state.origin, %{version: 0, value: nil})
 
-        nodes =
-          put_in(nodes, [to, :informed], payload.version == state.latest.version)
+      state =
+        if payload.version > current.version do
+          nodes =
+            put_in(state.nodes, [to, :known], Map.put(node.known, state.origin, payload))
 
-        informed =
-          if payload.version == state.latest.version do
-            MapSet.put(state.informed, to)
-          else
-            state.informed
-          end
+          nodes =
+            put_in(nodes, [to, :informed], payload.version == state.latest.version)
 
-        %{state | nodes: nodes, informed: informed, delivered: state.delivered + 1}
-      else
-        %{state | delivered: state.delivered + 1}
-      end
+          informed =
+            if payload.version == state.latest.version do
+              MapSet.put(state.informed, to)
+            else
+              state.informed
+            end
 
-    state
+          %{state | nodes: nodes, informed: informed, delivered: state.delivered + 1}
+        else
+          %{state | delivered: state.delivered + 1}
+        end
+
+      state
+    end
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, action}) do
@@ -498,6 +565,7 @@ defmodule SignalGarden.Sim.Core do
         id: id,
         x: x,
         y: y,
+        up: node.up,
         informed: node.informed,
         is_origin: id == state.origin,
         partition: Map.get(state.partitions, id, 0),

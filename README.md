@@ -1,9 +1,9 @@
 # Signal Garden
 
-Signal Garden is an interactive distributed-systems simulator. It shows message
-delay, network partitions, retries, and eventual convergence in a browser.
-A deterministic gossip network runs in Elixir. A Phoenix LiveView control room
-shows the message as it spreads.
+Signal Garden is an interactive distributed-systems simulator. It shows
+message delay, network partitions, retries, and eventual convergence in a
+browser. A deterministic gossip network runs in Elixir. A Phoenix LiveView
+control room shows the message as it spreads.
 
 The same scenario always produces the same event trace, convergence time, and
 history. Two runs with the same seed produce the same bytes. Anyone can replay
@@ -14,6 +14,7 @@ the same fault on another machine.
 - An actor model gossip engine written in pure Elixir.
 - Logical time that has no link to the wall clock.
 - Three network hazards: delay, message loss, and partitions.
+- Node crash and restart. A crashed node forgets its state and stops the spread.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 
@@ -72,9 +73,9 @@ Press **Run** to start the loop. Press **Step** to advance a fixed number of
 events. Click a node to toggle its partition group. Drag the sliders to change
 delay, loss rate, and speed. Pick a scenario from the list to load a new run.
 
-Use **Export JSON** to download the active scenario. Use **Import JSON** to
-paste a file and load it into the control room. A sample file ships at
-`priv/scenarios/ring.json`.
+Use the **Node fault** box to crash a node or restart it. Use **Export JSON**
+to download the active scenario. Use **Import JSON** to paste a file and load
+it into the control room. A sample file ships at `priv/scenarios/ring.json`.
 
 ## Scenario files
 
@@ -93,7 +94,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with seven runs. Each one fixes a topology, a seed,
+The scenario catalog ships with eight runs. Each one fixes a topology, a seed,
 and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -105,6 +106,7 @@ and a set of network conditions.
 | Healing partition | 14 | a split forms, then heals |
 | Churn | 15 | partitions toggle on a schedule |
 | Lossy link | 14 | five percent of messages lost |
+| Crash and recover | 12 | two nodes crash, then restart |
 
 ## Sample output
 
@@ -121,6 +123,7 @@ Random graph        16     converged    715       160    0         312
 Healing partition   14     converged    1397      198    51        446
 Churn               15     converged    731       152    4         309
 Lossy link          14     converged    594       120    6         237
+Crash and recover   12     converged    1815      269    24        540
 ```
 
 The determinism check confirms the core is reproducible:
@@ -129,6 +132,8 @@ The determinism check confirms the core is reproducible:
 ring determinism: convergence_time equal = true
 ring determinism: history equal          = true
 ring determinism: event_log equal        = true
+crash determinism: convergence_time equal = true
+crash determinism: event_log equal        = true
 ```
 
 Reproduce this output from a checkout with:
@@ -150,6 +155,25 @@ The control room shows a status pill. The status drives the run loop.
 A stalled run is a fault condition. It usually means a permanent partition
 separated the origin from the rest of the network.
 
+## Crash and restart
+
+A crash takes a node out of service. The node stops gossiping and forgets what
+it knew. In-flight messages to it are dropped. The network cannot converge
+while any node is down.
+
+A restart returns the node to service. The node starts empty and re-joins the
+gossip loop. It re-learns the latest value from its neighbours. Convergence
+returns once every node is back up and informed.
+
+The **Crash and recover** scenario demonstrates this flow. It crashes two nodes
+mid-run and restarts them later. The convergence chart shows the informed count
+dip while the nodes are down, then climb back to full coverage.
+
+You can also crash and restart nodes by hand from the control room. Use the
+**Node fault** box to pick a node, then crash or restart it while the run is
+active. Replay a scenario file to reproduce the exact fault schedule on another
+machine.
+
 ## Testing
 
 Run the full suite:
@@ -158,11 +182,10 @@ Run the full suite:
 mix test
 ```
 
-The suite has 40 tests. It covers the deterministic core, the topology
+The suite has 49 tests. It covers the deterministic core, the topology
 builder, the scenario codec, the scenario catalog, the engine GenServer, and
-the LiveView.
-Tests never sleep and never read the wall clock. Each core test replays a
-scenario and asserts on the resulting state.
+the LiveView. Tests never sleep and never read the wall clock. Each core test
+replays a scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -175,6 +198,7 @@ mix precommit
 
 - Logical time is synthetic, so convergence times compare runs, not real hosts.
 - Partitions are modelled as group labels, not as link failures per edge.
+- Crashes lose all node state. There is no disk or persistent memory model.
 - The engine runs one scenario at a time inside a single GenServer.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
@@ -185,7 +209,7 @@ mix precommit
 Later releases can build on this core without changing the model.
 
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
-- **Crash and restart.** Kill nodes mid-run and watch the network recover.
+- **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Swap the rumor for a grow-only counter.
 - **Headless replay tool.** Run a scenario from the CLI and print a trace.
 - **Edge-level partitions.** Cut a single link instead of a node group.
