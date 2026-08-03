@@ -18,6 +18,7 @@ defmodule SignalGarden.Scenarios do
       grid(),
       random(),
       split(),
+      restart(),
       churn(),
       lossy()
     ]
@@ -117,6 +118,26 @@ defmodule SignalGarden.Scenarios do
         %{at: 520, action: {:assign, 12, 1}, label: "Node 12 joins group B"},
         %{at: 580, action: {:assign, 14, 1}, label: "Node 14 joins group B"},
         %{at: 2600, action: {:merge, :all}, label: "Network heals"}
+      ]
+    }
+  end
+
+  @doc "A line where a bridge node crashes and later restarts."
+  def restart do
+    %Scenario{
+      id: :restart,
+      name: "Crash and restart",
+      description: "Node 4 crashes at T=420 and restarts at T=1400.",
+      seed: 17,
+      topology: Topology.line(8),
+      origin: 1,
+      latest_value: 100,
+      delay_ms: {25, 55},
+      drop_prob: 0.0,
+      gossip_interval_ms: 75,
+      fault_schedule: [
+        %{at: 420, action: {:crash, 4}, label: "Node 4 crashes"},
+        %{at: 1400, action: {:restart, 4}, label: "Node 4 restarts"}
       ]
     }
   end

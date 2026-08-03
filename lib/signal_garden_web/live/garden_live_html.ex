@@ -30,6 +30,10 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def status_tone(:idle), do: "sg-tone-ready"
   def status_tone(_), do: "sg-tone-ready"
 
+  def node_status_label(:up), do: "online"
+  def node_status_label(:down), do: "offline"
+  def node_status_label(_), do: "unknown"
+
   def format_time(nil), do: "--"
 
   def format_time(t) do
@@ -47,6 +51,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   def node_radius, do: 15
 
+  def node_palette(%{status: :down}), do: %{fill: "#111827", ring: "#fb7185"}
   def node_palette(%{informed: true, is_origin: true}), do: %{fill: "#fbbf24", ring: "#f59e0b"}
   def node_palette(%{informed: true}), do: %{fill: "#34d399", ring: "#10b981"}
   def node_palette(%{is_origin: true}), do: %{fill: "#1e293b", ring: "#f59e0b"}
@@ -61,7 +66,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       partitioned and recent and kind == :deliver -> "#fca5a5"
       partitioned -> "#b45309"
       recent and kind == :deliver -> "#22d3ee"
-      recent and kind in [:dropped_loss, :dropped_partition] -> "#fb7185"
+      recent and kind in [:dropped_loss, :dropped_partition, :crash] -> "#fb7185"
       true -> "#334155"
     end
   end
@@ -131,6 +136,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :deliver -> "text-cyan-300"
       :dropped_partition -> "text-amber-300"
       :dropped_loss -> "text-rose-300"
+      :dropped_crash -> "text-rose-300"
+      :crash -> "text-rose-300"
+      :restart -> "text-emerald-300"
       _ -> "text-slate-300"
     end
   end
@@ -138,6 +146,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:deliver), do: "delivered"
   def log_label(:dropped_partition), do: "dropped (partition)"
   def log_label(:dropped_loss), do: "dropped (loss)"
+  def log_label(:dropped_crash), do: "dropped (offline)"
+  def log_label(:crash), do: "crashed"
+  def log_label(:restart), do: "restarted"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -160,10 +171,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--split"></i>partitioned</span>
+          <span class="sg-legend__item"><i class="sg-swatch sg-swatch--offline"></i>offline</span>
         </div>
         <p class="sg-graph__readout">
           {@snapshot.reached}/{@snapshot.total} nodes know the latest value
           <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <span class="sg-graph__offline">{@snapshot.offline} offline</span>
         </p>
       </div>
 
@@ -206,11 +219,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <g class="sg-nodes">
                 <g
                   :for={node <- @snapshot.nodes}
-                  class="sg-node"
+                  class={["sg-node", node.status == :down && "sg-node--down"]}
                   phx-click="toggle_partition"
                   phx-value-node={node.id}
                   role="button"
                   tabindex="0"
+                  aria-label={"Node #{node.id}, #{node_status_label(node.status)}"}
                 >
                   <circle
                     cx={px(node.id, sg, :x)}
@@ -225,8 +239,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                     class="sg-node__body"
                     fill={node_palette(node).fill}
                     stroke={node_palette(node).ring}
-                    stroke-width={if(node.partition != 0, do: 2.5, else: 1.6)}
-                    stroke-dasharray={if(node.partition != 0, do: "4 4", else: "")}
+                    stroke-width={if(node.status == :down or node.partition != 0, do: 2.5, else: 1.6)}
+                    stroke-dasharray={
+                      cond do
+                        node.status == :down -> "2 4"
+                        node.partition != 0 -> "4 4"
+                        true -> ""
+                      end
+                    }
                   />
                   <%= if node.is_origin do %>
                     <circle
@@ -305,6 +325,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :selected_node, :integer, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -318,6 +339,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         delay_value={@delay_value}
         drop_value={@drop_value}
         speed={@speed}
+        selected_node={@selected_node}
         show_import={@show_import}
         import_json={@import_json}
       />
@@ -333,6 +355,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :delay_value, :any, required: true
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
+  attr :selected_node, :integer, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -378,6 +401,44 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <% end %>
         </select>
       </.form>
+
+      <section class="sg-node-controls">
+        <h3 class="sg-node-controls__title">Node fault</h3>
+        <.form for={nil} id="sg-form-node" phx-change="select_node" class="sg-form">
+          <.input
+            type="select"
+            name="node"
+            id="sg-node-target"
+            label="Target node"
+            options={node_options(@snapshot)}
+            value={@selected_node}
+            class="sg-select"
+          />
+        </.form>
+        <div class="sg-controls__row">
+          <button
+            id="sg-crash-node"
+            class="sg-btn sg-btn--fault"
+            type="button"
+            phx-click="crash_node"
+            disabled={node_down?(@snapshot, @selected_node)}
+          >
+            Crash node
+          </button>
+          <button
+            id="sg-restart-node"
+            class="sg-btn sg-btn--recover"
+            type="button"
+            phx-click="restart_node"
+            disabled={not node_down?(@snapshot, @selected_node)}
+          >
+            Restart node
+          </button>
+        </div>
+        <p class="sg-node-controls__hint">
+          Restart clears the node's local knowledge. Gossip must restore it.
+        </p>
+      </section>
 
       <.form for={nil} id="sg-form-delay" phx-change="set_delay" class="sg-form">
         <div class="sg-form__line">
@@ -478,6 +539,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <dt>Clock</dt><dd>{format_time(@snapshot.clock)}</dd>
         </div>
         <div>
+          <dt>Online</dt><dd>{@snapshot.online}</dd>
+        </div>
+        <div>
+          <dt>Offline</dt><dd>{@snapshot.offline}</dd>
+        </div>
+        <div>
           <dt>Hops</dt><dd>{@snapshot.hops}</dd>
         </div>
         <div>
@@ -508,14 +575,30 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <%= for entry <- Enum.take(@snapshot.event_log, 12) do %>
               <li class="sg-log__row">
                 <span class="sg-log__time">T={entry.t}</span>
-                <span class={"sg-log__kind #{log_tone(entry.kind)}"}>
-                  {entry.from} -> {entry.to} {log_label(entry.kind)}
-                </span>
+                <%= if Map.has_key?(entry, :node) do %>
+                  <span class={"sg-log__kind #{log_tone(entry.kind)}"}>
+                    node {entry.node} {log_label(entry.kind)}
+                  </span>
+                <% else %>
+                  <span class={"sg-log__kind #{log_tone(entry.kind)}"}>
+                    {entry.from} -> {entry.to} {log_label(entry.kind)}
+                  </span>
+                <% end %>
               </li>
             <% end %>
           </ul>
       <% end %>
     </section>
     """
+  end
+
+  defp node_options(snapshot) do
+    Enum.map(snapshot.nodes, fn node ->
+      {"Node #{node.id} - #{node_status_label(node.status)}", node.id}
+    end)
+  end
+
+  defp node_down?(snapshot, node_id) do
+    Enum.any?(snapshot.nodes, fn node -> node.id == node_id and node.status == :down end)
   end
 end

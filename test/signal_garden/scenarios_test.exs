@@ -23,6 +23,11 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "the restart scenario schedules a crash and a restart" do
+    actions = Enum.map(Scenarios.restart().fault_schedule, & &1.action)
+    assert actions == [{:crash, 4}, {:restart, 4}]
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

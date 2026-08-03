@@ -44,6 +44,8 @@ defmodule SignalGarden.Sim.Engine do
   def set_drop(drop), do: GenServer.cast(__MODULE__, {:set_drop, drop})
   def set_interval(interval), do: GenServer.cast(__MODULE__, {:set_interval, interval})
   def set_speed(opts), do: GenServer.cast(__MODULE__, {:set_speed, opts})
+  def crash_node(node), do: GenServer.cast(__MODULE__, {:command, {:crash, node}})
+  def restart_node(node), do: GenServer.cast(__MODULE__, {:command, {:restart, node}})
 
   def toggle_partition(node),
     do: GenServer.cast(__MODULE__, {:command, {:toggle_partition, node}})

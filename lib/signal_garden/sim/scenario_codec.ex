@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy imported)a
+  @catalog_ids ~w(line ring grid random split restart churn lossy imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -82,6 +82,14 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "group" => group,
       "label" => label
     }
+  end
+
+  defp encode_fault(%{at: at, action: {:crash, node}, label: label}) do
+    %{"at" => at, "action" => "crash", "node" => node, "label" => label}
+  end
+
+  defp encode_fault(%{at: at, action: {:restart, node}, label: label}) do
+    %{"at" => at, "action" => "restart", "node" => node, "label" => label}
   end
 
   defp encode_topology(%Topology{} = topology) do
@@ -181,6 +189,16 @@ defmodule SignalGarden.Sim.ScenarioCodec do
        })
        when is_integer(at) and is_integer(node) and is_integer(group) do
     {:ok, %{at: at, action: {:assign, node, group}, label: label}}
+  end
+
+  defp decode_fault(%{"at" => at, "action" => "crash", "node" => node, "label" => label})
+       when is_integer(at) and is_integer(node) do
+    {:ok, %{at: at, action: {:crash, node}, label: label}}
+  end
+
+  defp decode_fault(%{"at" => at, "action" => "restart", "node" => node, "label" => label})
+       when is_integer(at) and is_integer(node) do
+    {:ok, %{at: at, action: {:restart, node}, label: label}}
   end
 
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}

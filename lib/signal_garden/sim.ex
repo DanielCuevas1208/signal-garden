@@ -64,4 +64,10 @@ defmodule SignalGarden.Sim do
 
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
+
+  @doc "Take a node offline and clear its current availability."
+  def crash_node(node), do: Engine.crash_node(node)
+
+  @doc "Bring a node back and reset its local knowledge."
+  def restart_node(node), do: Engine.restart_node(node)
 end

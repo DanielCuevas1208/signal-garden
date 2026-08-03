@@ -42,7 +42,10 @@ defmodule SignalGarden.Sim.Core do
 
   @type event ::
           {:gossip, pos_integer()}
-          | {:deliver, pos_integer(), %{version: non_neg_integer(), value: number()}}
+          | {:deliver, pos_integer(), pos_integer(), %{
+              version: non_neg_integer(),
+              value: number() | nil
+            }}
           | {:fault, term()}
 
   @type state :: %__MODULE__{}
@@ -114,20 +117,25 @@ defmodule SignalGarden.Sim.Core do
     origin = scenario.origin
 
     Enum.reduce(topology.nodes, %{}, fn id, acc ->
-      known =
-        if id == origin do
-          %{origin => %{version: 1, value: scenario.latest_value}}
-        else
-          %{origin => %{version: 0, value: nil}}
-        end
-
       Map.put(acc, id, %{
         id: id,
-        known: known,
+        known: initial_knowledge(id, scenario),
         neighbors: Map.get(topology.adjacency, id, []),
-        informed: id == origin
+        informed: id == origin,
+        status: :up
       })
     end)
+  end
+
+  defp initial_knowledge(id, scenario) do
+    value =
+      if id == scenario.origin do
+        %{version: 1, value: scenario.latest_value}
+      else
+        %{version: 0, value: nil}
+      end
+
+    %{scenario.origin => value}
   end
 
   defp schedule_gossip(%__MODULE__{topology: topology} = state) do
@@ -199,6 +207,14 @@ defmodule SignalGarden.Sim.Core do
     %{state | partitions: Map.new(map, fn {k, v} -> {k, v} end)}
   end
 
+  def command(%__MODULE__{} = state, {:crash, node}) when is_integer(node) do
+    crash_node(state, node)
+  end
+
+  def command(%__MODULE__{} = state, {:restart, node}) when is_integer(node) do
+    restart_node(state, node)
+  end
+
   def command(%__MODULE__{} = state, _unknown), do: state
 
   # ---------------------------------------------------------------------------
@@ -240,42 +256,60 @@ defmodule SignalGarden.Sim.Core do
   # ---------------------------------------------------------------------------
 
   defp handle_event(%__MODULE__{} = state, {:gossip, id}) do
-    node = state.nodes[id]
+    case Map.get(state.nodes, id) do
+      %{status: :up} = node ->
+        state
+        |> forward_rumor(node)
+        |> reschedule_gossip(id)
 
-    state
-    |> forward_rumor(node)
-    |> reschedule_gossip(id)
+      _ ->
+        state
+    end
   end
 
-  defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
-    node = state.nodes[to]
-    current = Map.get(node.known, state.origin, %{version: 0, value: nil})
+  defp handle_event(%__MODULE__{} = state, {:deliver, from, to, payload}) do
+    case Map.get(state.nodes, to) do
+      %{status: :down} ->
+        state
+        |> Map.put(:dropped, state.dropped + 1)
+        |> log_event(:dropped_crash, from, to)
+        |> tap_edge(edge_key(from, to), :crash)
 
-    state =
-      if payload.version > current.version do
-        nodes =
-          put_in(state.nodes, [to, :known], Map.put(node.known, state.origin, payload))
+      node ->
+        current = Map.get(node.known, state.origin, %{version: 0, value: nil})
 
-        nodes =
-          put_in(nodes, [to, :informed], payload.version == state.latest.version)
+        state =
+          if payload.version > current.version do
+            nodes =
+              put_in(state.nodes, [to, :known], Map.put(node.known, state.origin, payload))
 
-        informed =
-          if payload.version == state.latest.version do
-            MapSet.put(state.informed, to)
+            nodes =
+              put_in(nodes, [to, :informed], payload.version == state.latest.version)
+
+            informed =
+              if payload.version == state.latest.version do
+                MapSet.put(state.informed, to)
+              else
+                state.informed
+              end
+
+            %{state | nodes: nodes, informed: informed, delivered: state.delivered + 1}
           else
-            state.informed
+            %{state | delivered: state.delivered + 1}
           end
 
-        %{state | nodes: nodes, informed: informed, delivered: state.delivered + 1}
-      else
-        %{state | delivered: state.delivered + 1}
-      end
-
-    state
+        state
+    end
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, action}) do
-    command(state, action)
+    state = command(state, action)
+
+    case action do
+      {:crash, node} -> log_node_event(state, :crash, node)
+      {:restart, node} -> log_node_event(state, :restart, node)
+      _ -> state
+    end
   end
 
   defp forward_rumor(%__MODULE__{} = state, node) do
@@ -319,7 +353,7 @@ defmodule SignalGarden.Sim.Core do
         {delay, rng1} = sample_delay(state.delay_ms, state.rng)
         deliver_at = state.clock + delay
         state = %{state | rng: rng1, hops: state.hops + 1}
-        state = push_event_with(state, deliver_at, {:deliver, to, payload})
+        state = push_event_with(state, deliver_at, {:deliver, from, to, payload})
 
         state
         |> log_event(:deliver, from, to)
@@ -328,10 +362,86 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp reschedule_gossip(state, id) do
-    {jitter, rng} = uniform(state.rng, 0.85, 1.15)
-    state = %{state | rng: rng}
-    next = state.clock + round(state.gossip_interval_ms * jitter)
-    push_event(state, next, {:gossip, id})
+    if node_up?(state, id) do
+      {jitter, rng} = uniform(state.rng, 0.85, 1.15)
+      state = %{state | rng: rng}
+      next = state.clock + round(state.gossip_interval_ms * jitter)
+      push_event(state, next, {:gossip, id})
+    else
+      state
+    end
+  end
+
+  defp crash_node(%__MODULE__{} = state, node_id) do
+    case Map.get(state.nodes, node_id) do
+      %{status: :up} = node ->
+        nodes = Map.put(state.nodes, node_id, %{node | status: :down, informed: false})
+
+        state
+        |> Map.put(:nodes, nodes)
+        |> Map.update!(:informed, &MapSet.delete(&1, node_id))
+        |> Map.put(:convergence_time, nil)
+        |> remove_gossip_events(node_id)
+        |> resume_after_node_change()
+
+      _ ->
+        state
+    end
+  end
+
+  defp restart_node(%__MODULE__{} = state, node_id) do
+    case Map.get(state.nodes, node_id) do
+      %{} = node ->
+        informed? = node_id == state.origin
+
+        restarted = %{
+          node
+          | status: :up,
+            known: initial_knowledge(node_id, state.scenario),
+            informed: informed?
+        }
+
+        informed =
+          if informed? do
+            MapSet.put(state.informed, node_id)
+          else
+            MapSet.delete(state.informed, node_id)
+          end
+
+        state =
+          state
+          |> Map.put(:nodes, Map.put(state.nodes, node_id, restarted))
+          |> Map.put(:informed, informed)
+          |> Map.put(:convergence_time, nil)
+          |> remove_gossip_events(node_id)
+          |> resume_after_node_change()
+
+        reschedule_gossip(state, node_id)
+
+      _ ->
+        state
+    end
+  end
+
+  defp resume_after_node_change(%__MODULE__{status: status} = state)
+       when status in [:converged, :exhausted] do
+    %{state | status: :paused}
+  end
+
+  defp resume_after_node_change(state), do: state
+
+  defp remove_gossip_events(%__MODULE__{} = state, node_id) do
+    queue =
+      Enum.reject(state.queue, fn
+        {_time, _seq, {:gossip, ^node_id}} -> true
+        _event -> false
+      end)
+
+    %{state | queue: queue}
+  end
+
+  defp node_up?(%__MODULE__{} = state, node_id) do
+    match?(%{status: :up}, Map.get(state.nodes, node_id))
   end
 
   defp maybe_converge(state) do
@@ -386,6 +496,11 @@ defmodule SignalGarden.Sim.Core do
     log = [entry | state.event_log]
     log = Enum.take(log, state.log_size)
     %{state | event_log: log}
+  end
+
+  defp log_node_event(%__MODULE__{} = state, kind, node) do
+    entry = %{t: state.clock, kind: kind, node: node}
+    %{state | event_log: Enum.take([entry | state.event_log], state.log_size)}
   end
 
   defp tap_edge(%__MODULE__{} = state, key, kind) do
@@ -480,6 +595,8 @@ defmodule SignalGarden.Sim.Core do
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
       partitions: state.partitions,
+      online: online_count(state),
+      offline: offline_count(state),
       nodes: snapshot_nodes(state),
       edges: snapshot_edges(state),
       history: state.history,
@@ -501,6 +618,7 @@ defmodule SignalGarden.Sim.Core do
         informed: node.informed,
         is_origin: id == state.origin,
         partition: Map.get(state.partitions, id, 0),
+        status: node.status,
         value: get_in(node, [Access.key(:known), state.origin, Access.key(:value)]),
         version: get_in(node, [Access.key(:known), state.origin, Access.key(:version)])
       }
@@ -535,4 +653,10 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp edge_key(a, b), do: if(a <= b, do: {a, b}, else: {b, a})
+
+  defp online_count(state), do: map_size(state.nodes) - offline_count(state)
+
+  defp offline_count(state) do
+    Enum.count(state.nodes, fn {_id, node} -> node.status == :down end)
+  end
 end

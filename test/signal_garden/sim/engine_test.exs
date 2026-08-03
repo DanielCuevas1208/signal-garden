@@ -42,4 +42,18 @@ defmodule SignalGarden.Sim.EngineTest do
 
     assert Engine.snapshot().delay_ms == {120, 120}
   end
+
+  test "node crash and restart commands update the snapshot" do
+    Engine.crash_node(2)
+    _ = :sys.get_state(Engine)
+
+    crashed = Enum.find(Engine.snapshot().nodes, &(&1.id == 2))
+    assert crashed.status == :down
+
+    Engine.restart_node(2)
+    _ = :sys.get_state(Engine)
+
+    restarted = Enum.find(Engine.snapshot().nodes, &(&1.id == 2))
+    assert restarted.status == :up
+  end
 end

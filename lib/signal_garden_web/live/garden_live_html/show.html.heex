@@ -7,7 +7,7 @@
           <h1 class="sg-brand__title">Signal Garden</h1>
           <p class="sg-brand__subtitle">
             A deterministic gossip simulator. A rumor crosses a network that
-            delays, loses, and partitions itself.
+            delays, loses, partitions, crashes, and recovers.
           </p>
         </div>
       </div>
@@ -33,6 +33,7 @@
         delay_value={@delay_value}
         drop_value={@drop_value}
         speed={@speed}
+        selected_node={@selected_node}
         show_import={@show_import}
         import_json={@import_json}
       />

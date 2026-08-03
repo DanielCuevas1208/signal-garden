@@ -1,7 +1,7 @@
 # Signal Garden
 
-Signal Garden is an interactive distributed-systems simulator. It shows message
-delay, network partitions, retries, and eventual convergence in a browser.
+Signal Garden is an interactive distributed-systems simulator. It shows
+message delay, partitions, retries, crashes, and eventual convergence.
 A deterministic gossip network runs in Elixir. A Phoenix LiveView control room
 shows the message as it spreads.
 
@@ -13,7 +13,7 @@ the same fault on another machine.
 
 - An actor model gossip engine written in pure Elixir.
 - Logical time that has no link to the wall clock.
-- Three network hazards: delay, message loss, and partitions.
+- Four network hazards: delay, message loss, partitions, and node crashes.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 
@@ -24,7 +24,7 @@ Signal Garden separates the deterministic core from the live interface.
 ```
 lib/signal_garden/
   sim/
-    core.ex           # Pure, side-effect-free state machine. Owns the event queue.
+    core.ex           # Pure state machine. Owns the event queue and node status.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
@@ -34,9 +34,12 @@ lib/signal_garden/
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
-event from a priority queue. A gossip event makes a node send a message to one
-neighbour. The engine applies delay, loss, and partition checks, then schedules
-a delivery event in the future. Two runs with the same seed walk the same path.
+event from a priority queue. A gossip event makes an online node send a message
+to one neighbour. The engine applies delay, loss, partition, and node status
+checks. It then schedules delivery in the future.
+
+A crash marks a node offline. A restart marks the node online and clears its
+local knowledge. Gossip restores the node.
 
 The `Engine` GenServer owns a `Core` struct. On each animation frame it advances
 the core by a burst of events and broadcasts a snapshot over Phoenix PubSub.
@@ -69,8 +72,12 @@ http://localhost:4000
 ```
 
 Press **Run** to start the loop. Press **Step** to advance a fixed number of
-events. Click a node to toggle its partition group. Drag the sliders to change
-delay, loss rate, and speed. Pick a scenario from the list to load a new run.
+events. Click a node to toggle its partition group. Use **Node fault** to
+crash or restart the selected node.
+
+Drag the sliders to change delay, loss rate, and speed. Pick a scenario from
+the list to load a new run. The graph shows offline nodes and the event feed
+shows crash and restart actions.
 
 Use **Export JSON** to download the active scenario. Use **Import JSON** to
 paste a file and load it into the control room. A sample file ships at
@@ -93,7 +100,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with seven runs. Each one fixes a topology, a seed,
+The scenario catalog ships with eight runs. Each one fixes a topology, a seed,
 and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -103,6 +110,7 @@ and a set of network conditions.
 | Grid | 30 | none |
 | Random graph | 16 | none |
 | Healing partition | 14 | a split forms, then heals |
+| Crash and restart | 8 | node 4 crashes, then recovers |
 | Churn | 15 | partitions toggle on a schedule |
 | Lossy link | 14 | five percent of messages lost |
 
@@ -119,6 +127,7 @@ Ring                12     converged    750       120    0         236
 Grid                30     converged    1295      564    0         1112
 Random graph        16     converged    715       160    0         312
 Healing partition   14     converged    1397      198    51        446
+Crash and restart   8      converged    1460      145    11        288
 Churn               15     converged    731       152    4         309
 Lossy link          14     converged    594       120    6         237
 ```
@@ -158,7 +167,7 @@ Run the full suite:
 mix test
 ```
 
-The suite has 40 tests. It covers the deterministic core, the topology
+The suite has 48 tests. It covers the deterministic core, node recovery, the topology
 builder, the scenario codec, the scenario catalog, the engine GenServer, and
 the LiveView.
 Tests never sleep and never read the wall clock. Each core test replays a
@@ -177,7 +186,8 @@ mix precommit
 - Partitions are modelled as group labels, not as link failures per edge.
 - The engine runs one scenario at a time inside a single GenServer.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
-- Persistence is out of scope: a restart reloads the default scenario.
+- Persistence is out of scope: an application restart reloads the default scenario.
+- A node restart clears local knowledge. It does not model durable storage.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
 
 ## Roadmap
@@ -185,7 +195,7 @@ mix precommit
 Later releases can build on this core without changing the model.
 
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
-- **Crash and restart.** Kill nodes mid-run and watch the network recover.
+- **Crash and restart.** Done. Kill a node mid-run and watch gossip restore it.
 - **Counters and CRDTs.** Swap the rumor for a grow-only counter.
 - **Headless replay tool.** Run a scenario from the CLI and print a trace.
 - **Edge-level partitions.** Cut a single link instead of a node group.

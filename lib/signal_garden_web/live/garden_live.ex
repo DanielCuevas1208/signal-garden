@@ -30,6 +30,7 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:snapshot, snapshot)
       |> assign(:scenarios, Enum.map(Scenarios.catalog(), &scenario_option/1))
       |> assign(:selected_scenario, snapshot.scenario.id)
+      |> assign(:selected_node, snapshot.origin)
       |> assign(:canvas, {@canvas_width, @canvas_height})
       |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
@@ -74,9 +75,14 @@ defmodule SignalGardenWeb.GardenLive do
   end
 
   def handle_event("select_scenario", %{"scenario" => id}, socket) do
-    id = String.to_existing_atom(id)
+    id = scenario_id(id)
     Sim.load_scenario(id)
     {:noreply, assign(socket, :selected_scenario, id)}
+  end
+
+  def handle_event("select_node", %{"node" => node_id}, socket) do
+    node_id = parse_int(node_id, socket.assigns.selected_node)
+    {:noreply, assign(socket, :selected_node, valid_node(socket.assigns.snapshot, node_id))}
   end
 
   def handle_event("set_delay", %{"delay" => value}, socket) do
@@ -97,6 +103,16 @@ defmodule SignalGardenWeb.GardenLive do
     burst = max(1, min(40, burst))
     Sim.set_speed(burst: burst, frame_ms: 60)
     {:noreply, assign(socket, :speed, burst)}
+  end
+
+  def handle_event("crash_node", _params, socket) do
+    Sim.crash_node(socket.assigns.selected_node)
+    {:noreply, socket}
+  end
+
+  def handle_event("restart_node", _params, socket) do
+    Sim.restart_node(socket.assigns.selected_node)
+    {:noreply, socket}
   end
 
   def handle_event("toggle_partition", %{"node" => node_id}, socket) do
@@ -155,8 +171,22 @@ defmodule SignalGardenWeb.GardenLive do
     socket
     |> assign(:snapshot, snapshot)
     |> assign(:selected_scenario, snapshot.scenario.id)
+    |> assign(:selected_node, valid_node(snapshot, socket.assigns.selected_node))
     |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
     |> assign(:drop_value, round(snapshot.drop_prob * 100))
+  end
+
+  defp scenario_id(value) when is_binary(value) do
+    case Enum.find(Scenarios.catalog(), fn scenario -> Atom.to_string(scenario.id) == value end) do
+      %{id: id} -> id
+      _ -> :line
+    end
+  end
+
+  defp scenario_id(_value), do: :line
+
+  defp valid_node(snapshot, candidate) do
+    if Enum.any?(snapshot.nodes, &(&1.id == candidate)), do: candidate, else: snapshot.origin
   end
 
   defp delay_to_form({_lo, hi}), do: hi

@@ -24,6 +24,15 @@ defmodule SignalGarden.Sim.CoreTest do
     assert a.event_log == b.event_log
   end
 
+  test "crash and restart traces are reproducible" do
+    a = run_to_completion(:restart)
+    b = run_to_completion(:restart)
+
+    assert a.convergence_time == b.convergence_time
+    assert a.history == b.history
+    assert a.event_log == b.event_log
+  end
+
   test "different seeds produce different convergence traces" do
     a = run_to_completion(:ring)
 
@@ -95,6 +104,52 @@ defmodule SignalGarden.Sim.CoreTest do
     assert Map.get(state.partitions, 2, 0) == 0
   end
 
+  test "a crashed node loses availability until it restarts" do
+    scenario = Scenarios.restart()
+
+    state =
+      Core.new(scenario)
+      |> Core.command({:set_status, :running})
+      |> step_until_clock(420)
+
+    assert state.nodes[4].status == :down
+    refute MapSet.member?(state.informed, 4)
+    assert state.status != :converged
+
+    completed = run_to_converge(state)
+
+    assert completed.status == :converged
+    assert completed.nodes[4].status == :up
+    assert MapSet.member?(completed.informed, 4)
+  end
+
+  test "restarting a node clears its local knowledge" do
+    state = Core.new(Scenarios.line())
+    state = Core.command(state, {:crash, 2})
+    assert state.nodes[2].status == :down
+
+    state = Core.command(state, {:restart, 2})
+
+    assert state.nodes[2].status == :up
+    assert state.nodes[2].known[1] == %{version: 0, value: nil}
+    refute MapSet.member?(state.informed, 2)
+  end
+
+  test "a fault after convergence opens a new recovery run" do
+    converged = run_to_completion(:line)
+    crashed = Core.command(converged, {:crash, 2})
+
+    assert crashed.status == :paused
+    assert crashed.convergence_time == nil
+
+    recovered =
+      crashed
+      |> Core.command({:restart, 2})
+      |> run_to_converge()
+
+    assert recovered.status == :converged
+  end
+
   # ---------------------------------------------------------------------------
   # delay and loss
   # ---------------------------------------------------------------------------
@@ -129,6 +184,8 @@ defmodule SignalGarden.Sim.CoreTest do
     assert length(snap.edges) == length(scenario.topology.edges)
     assert snap.status == :idle
     assert snap.reached == 1
+    assert snap.online == snap.total
+    assert Enum.find(snap.nodes, &(&1.id == scenario.origin)).status == :up
   end
 
   # ---------------------------------------------------------------------------
@@ -144,6 +201,13 @@ defmodule SignalGarden.Sim.CoreTest do
   defp step_n(%Core{} = state, events) do
     {state, _} = Core.step(state, events)
     state
+  end
+
+  defp step_until_clock(%Core{} = state, target) do
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      acc = step_n(acc, 50)
+      if acc.clock >= target, do: {:halt, acc}, else: {:cont, acc}
+    end)
   end
 
   defp await(%Core{} = state, target, budget) do

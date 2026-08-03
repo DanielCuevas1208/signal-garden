@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -21,20 +29,11 @@ jobs:
           elixir-version: "1.17.3"
           otp-version: "27"
 
-      - name: Install dependencies
-        run: mix deps.get
+      - name: Set up project
+        run: mix setup
 
-      - name: Compile (warnings as errors)
-        run: mix compile --warnings-as-errors
+      - name: Run precommit checks
+        run: mix precommit
 
-      - name: Check formatting
+      - name: Verify formatting
         run: mix format --check-formatted
-
-      - name: Unlock unused deps
-        run: mix deps.unlock --check-unused
-
-      - name: Build assets
-        run: mix assets.build
-
-      - name: Run tests
-        run: mix test

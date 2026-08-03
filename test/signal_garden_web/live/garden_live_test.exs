@@ -34,6 +34,28 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert html =~ "Import JSON"
   end
 
+  test "node fault controls crash and restart the selected node", %{conn: conn} do
+    SignalGarden.Sim.load_scenario(:line)
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-node")
+    |> render_change(%{"node" => "2"})
+
+    view |> element("#sg-crash-node") |> render_click()
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    crashed = Enum.find(SignalGarden.Sim.snapshot().nodes, &(&1.id == 2))
+    assert crashed.status == :down
+    assert has_element?(view, "#sg-restart-node")
+
+    view |> element("#sg-restart-node") |> render_click()
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    restarted = Enum.find(SignalGarden.Sim.snapshot().nodes, &(&1.id == 2))
+    assert restarted.status == :up
+  end
+
   test "importing a scenario file loads it into the engine", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
     path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "ring.json"])

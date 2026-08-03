@@ -51,6 +51,12 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert decoded.name == "Custom demo"
   end
 
+  test "crash and restart faults keep their actions during a round trip" do
+    scenario = Scenarios.restart()
+    assert {:ok, decoded} = scenario |> ScenarioCodec.encode() |> ScenarioCodec.decode()
+    assert decoded.fault_schedule == scenario.fault_schedule
+  end
+
   test "invalid JSON returns a structured error" do
     assert {:error, {:invalid_json, _}} = ScenarioCodec.decode("{not json")
   end
