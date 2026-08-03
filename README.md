@@ -18,6 +18,7 @@ the same fault on another machine.
 - Two gossip payloads: a rumor and a grow-only counter.
 - A grow-only counter (G-Counter) that converges across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
+- A headless replay tool. The CLI runs a scenario and prints a trace.
 - A live SVG graph, a convergence chart, and an event feed.
 
 ## Architecture
@@ -29,11 +30,14 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    replay.ex         # Headless replay: full trace plus a determinism check.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
+lib/mix/tasks/
+  signal_garden.replay.ex # CLI entry point for the headless replay tool.
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
@@ -96,6 +100,30 @@ alias SignalGarden.Sim.ScenarioCodec
 {:ok, scenario} = File.read!("priv/scenarios/ring.json") |> ScenarioCodec.decode()
 ```
 
+## Headless replay tool
+
+Run a scenario without a browser. The tool drives the pure core to a
+terminal state and prints a trace.
+
+    mix signal_garden.replay counter
+
+Pick a scenario by id, or pass a JSON file:
+
+    mix signal_garden.replay ring
+    mix signal_garden.replay priv/scenarios/ring.json
+
+Run every built-in scenario as a table:
+
+    mix signal_garden.replay all
+
+Print the whole trace with `--full`. Print JSON with `--json`:
+
+    mix signal_garden.replay counter --json
+
+Use `--list` to see the catalog. Use `--events N` to limit trace lines.
+The tool runs each scenario twice. Equal traces prove determinism.
+The exit code is 0 on success, 1 on error, and 2 when a run does not converge.
+
 ## Built-in scenarios
 
 The scenario catalog ships with nine runs. Each one fixes a topology, a seed,
@@ -136,24 +164,28 @@ write survives only the current run. Reset rebuilds the scenario from its seed.
 
 ## Sample output
 
-The block below is real output from a deterministic run of every scenario. It
-was produced with the `Core` module only, with no animation loop and no
-browser. Reproduce it with the command below.
+The block below is real output from a headless replay of every scenario.
+It uses the pure `Core` module only, with no animation loop and no browser.
+Reproduce it with the command below.
+
+    mix signal_garden.replay all
 
 ```
-scenario            nodes  status       t(ms)     hops   dropped   steps
-Line                8      converged    772       72     0         142
-Ring                12     converged    750       120    0         236
-Grid                30     converged    1295      564    0         1112
-Random graph        16     converged    715       160    0         312
-Healing partition   14     converged    1397      198    51        446
-Churn               15     converged    731       152    4         309
-Lossy link          14     converged    594       120    6         237
-Crash and recover   12     converged    1815      269    24        540
-Grow-only counter   12     converged    3832      617    44        1281
+scenario           mode     nodes  status     t(ms)  hops  dropped  steps  det
+Line               rumor    8      converged  772    72    0        142    true
+Ring               rumor    12     converged  750    120   0        236    true
+Grid               rumor    30     converged  1295   564   0        1112   true
+Random graph       rumor    16     converged  715    160   0        312    true
+Healing partition  rumor    14     converged  1397   198   51       446    true
+Churn              rumor    15     converged  731    152   4        309    true
+Lossy link         rumor    14     converged  594    120   6        237    true
+Crash and recover  rumor    12     converged  1815   269   24       540    true
+Grow-only counter  counter  12     converged  3832   617   44       1281   true
 ```
 
-The determinism check confirms the core is reproducible:
+The replay tool also verifies reproducibility. Each scenario runs twice,
+and the two traces must match. The `priv/sample.exs` script prints the
+same checks:
 
 ```
 ring determinism: convergence_time equal = true
@@ -166,7 +198,7 @@ counter determinism: counter_total equal  = true
 counter determinism: event_log equal      = true
 ```
 
-Reproduce this output from a checkout with:
+Reproduce the checks from a checkout with:
 
 ```
 mix run --no-start priv/sample.exs
@@ -215,11 +247,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 90 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, and the
+headless replay tool. It also covers the engine GenServer and the LiveView.
+Tests never sleep and never read the wall clock. Each core test replays a
+scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -234,6 +266,7 @@ mix precommit
 - Partitions are modelled as group labels, not as link failures per edge.
 - Crashes lose all node state. There is no disk or persistent memory model.
 - The engine runs one scenario at a time inside a single GenServer.
+- The replay tool stops a run that never converges at a fixed event budget.
 - The counter payload is a G-Counter. It only grows; it cannot be decremented.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
@@ -246,7 +279,7 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. The CLI replays a scenario and prints a deterministic trace.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
