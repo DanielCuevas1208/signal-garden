@@ -138,6 +138,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :dropped_loss -> "text-rose-300"
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
+      :increment -> "text-violet-300"
       _ -> "text-slate-300"
     end
   end
@@ -147,6 +148,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:dropped_loss), do: "dropped (loss)"
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
+  def log_label(:increment), do: "wrote"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -172,8 +174,13 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
-          {@snapshot.reached}/{@snapshot.total} nodes know the latest value
-          <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <%= if @snapshot.mode == :counter do %>
+            {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
+            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <% else %>
+            {@snapshot.reached}/{@snapshot.total} nodes know the latest value
+            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <% end %>
         </p>
       </div>
 
@@ -269,6 +276,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
+                  <%= if sg.mode == :counter do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}
+                    </text>
+                  <% end %>
                 </g>
               </g>
             </svg>
@@ -288,6 +304,10 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   defp py_label(id, sg) do
     project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 14)
+  end
+
+  defp py_value(id, sg) do
+    project(sg_layout(sg, id)) |> elem(1) |> Kernel.-(node_radius() + 10)
   end
 
   defp sg_layout(snapshot, id) do
@@ -486,10 +506,24 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             >
               Restart
             </button>
+            <%= if @snapshot.mode == :counter do %>
+              <button
+                class="sg-btn sg-btn--write"
+                type="button"
+                phx-click="increment"
+                phx-value-node={@fault_node}
+              >
+                +1
+              </button>
+            <% end %>
           </div>
         </.form>
         <p class="sg-faults__note">
-          Pick a node, then crash or restart it while the run is active.
+          <%= if @snapshot.mode == :counter do %>
+            Pick a node, then write to its counter cell or crash and restart it.
+          <% else %>
+            Pick a node, then crash or restart it while the run is active.
+          <% end %>
         </p>
       </div>
 
@@ -549,6 +583,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         <div>
           <dt>Dropped</dt><dd>{@snapshot.dropped}</dd>
         </div>
+        <%= if @snapshot.mode == :counter do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.counter_writes}</dd>
+          </div>
+          <div>
+            <dt>Counter total</dt><dd>{@snapshot.counter_total}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
@@ -572,10 +614,13 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <li class="sg-log__row">
                 <span class="sg-log__time">T={entry.t}</span>
                 <span class={"sg-log__kind #{log_tone(entry.kind)}"}>
-                  <%= if entry.to do %>
-                    {entry.from} -> {entry.to} {log_label(entry.kind)}
-                  <% else %>
-                    node {entry.from} {log_label(entry.kind)}
+                  <%= cond do %>
+                    <% entry.kind == :increment -> %>
+                      node {entry.from} wrote +{entry.amount}
+                    <% entry.to -> %>
+                      {entry.from} -> {entry.to} {log_label(entry.kind)}
+                    <% true -> %>
+                      node {entry.from} {log_label(entry.kind)}
                   <% end %>
                 </span>
               </li>

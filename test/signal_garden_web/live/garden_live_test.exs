@@ -83,4 +83,24 @@ defmodule SignalGardenWeb.GardenLiveTest do
     up = Enum.find(snapshot.nodes, &(&1.id == 2))
     assert up.up == true
   end
+
+  test "counter mode shows the write control and increments the total", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "counter"})
+
+    assert has_element?(view, "button", "+1")
+    assert has_element?(view, ".sg-node__value")
+    assert render(view) =~ "nodes at total"
+
+    view |> render_click("increment", %{"node" => "2"})
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    snapshot = SignalGarden.Sim.snapshot()
+    assert snapshot.mode == :counter
+    assert snapshot.counter_writes == 1
+    assert snapshot.counter_total == 1
+  end
 end

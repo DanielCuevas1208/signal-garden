@@ -20,7 +20,8 @@ defmodule SignalGarden.Scenarios do
       split(),
       churn(),
       lossy(),
-      crash()
+      crash(),
+      counter()
     ]
   end
 
@@ -190,6 +191,38 @@ defmodule SignalGarden.Scenarios do
         %{at: 2400, action: {:assign, 4, 1}, label: "Quick split"},
         %{at: 2450, action: {:assign, 5, 1}, label: "Quick split"},
         %{at: 3200, action: {:merge, :all}, label: "Heal"}
+      ]
+    }
+  end
+
+  @doc """
+  A random graph that replicates a grow-only counter.
+
+  Five writes climb the counter on a schedule. Each node keeps one cell per
+  node id and merges with element-wise max, so the total converges even while
+  the network keeps losing and reordering messages.
+  """
+  def counter do
+    topology = Topology.random(12, 3, 21)
+
+    %Scenario{
+      id: :counter,
+      name: "Grow-only counter",
+      description: "Twelve nodes replicate a G-Counter. Writes climb on a schedule.",
+      seed: 21,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {25, 55},
+      drop_prob: 0.05,
+      gossip_interval_ms: 70,
+      mode: :counter,
+      fault_schedule: [
+        %{at: 400, action: {:increment, 1, 1}, label: "Node 1 writes +1"},
+        %{at: 900, action: {:increment, 6, 2}, label: "Node 6 writes +2"},
+        %{at: 1500, action: {:increment, 9, 1}, label: "Node 9 writes +1"},
+        %{at: 2200, action: {:increment, 4, 3}, label: "Node 4 writes +3"},
+        %{at: 2800, action: {:increment, 1, 2}, label: "Node 1 writes +2"}
       ]
     }
   end

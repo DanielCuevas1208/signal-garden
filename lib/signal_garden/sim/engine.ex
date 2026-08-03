@@ -59,6 +59,9 @@ defmodule SignalGarden.Sim.Engine do
   def crash(node), do: GenServer.cast(__MODULE__, {:command, {:crash, node}})
   def restart(node), do: GenServer.cast(__MODULE__, {:command, {:restart, node}})
 
+  def increment(node, amount \\ 1),
+    do: GenServer.cast(__MODULE__, {:command, {:increment, node, amount}})
+
   # ---------------------------------------------------------------------------
   # gen server callbacks
   # ---------------------------------------------------------------------------
