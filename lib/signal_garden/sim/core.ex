@@ -108,11 +108,17 @@ defmodule SignalGarden.Sim.Core do
   # construction
   # ---------------------------------------------------------------------------
 
-  @doc "Build a fresh core state from a scenario struct."
-  def new(%SignalGarden.Sim.Scenario{} = scenario) do
+  @doc """
+  Build a fresh core state from a scenario struct.
+
+  The `:log_size` option caps the event log and the history. Pass
+  `log_size: :infinity` to keep every event for a headless replay.
+  """
+  def new(%SignalGarden.Sim.Scenario{} = scenario, opts \\ []) do
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
+    log_size = Keyword.get(opts, :log_size, 80)
 
     state = %__MODULE__{
       scenario: scenario,
@@ -130,7 +136,7 @@ defmodule SignalGarden.Sim.Core do
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
       informed: initial_informed(scenario),
-      log_size: 80
+      log_size: log_size
     }
 
     state
@@ -314,8 +320,7 @@ defmodule SignalGarden.Sim.Core do
     }
 
     log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    %{state | event_log: trim_log(log, state.log_size)}
   end
 
   defp log_increment(%__MODULE__{} = state, node, amount) do
@@ -329,8 +334,7 @@ defmodule SignalGarden.Sim.Core do
     }
 
     log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    %{state | event_log: trim_log(log, state.log_size)}
   end
 
   # ---------------------------------------------------------------------------
@@ -614,10 +618,10 @@ defmodule SignalGarden.Sim.Core do
     history = state.history ++ [point]
 
     history =
-      if length(history) > state.log_size do
-        Enum.take(history, -state.log_size)
-      else
-        history
+      case state.log_size do
+        :infinity -> history
+        size when length(history) > size -> Enum.take(history, -size)
+        _ -> history
       end
 
     %{state | history: history, steps: state.steps + 1}
@@ -633,13 +637,15 @@ defmodule SignalGarden.Sim.Core do
     }
 
     log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    %{state | event_log: trim_log(log, state.log_size)}
   end
 
   defp tap_edge(%__MODULE__{} = state, key, kind) do
     %{state | edge_activity: Map.put(state.edge_activity, key, {state.clock, kind})}
   end
+
+  defp trim_log(log, :infinity), do: log
+  defp trim_log(log, size), do: Enum.take(log, size)
 
   # ---------------------------------------------------------------------------
   # queue helpers
