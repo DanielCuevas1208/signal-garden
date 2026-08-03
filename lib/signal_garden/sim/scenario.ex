@@ -5,6 +5,15 @@ defmodule SignalGarden.Sim.Scenario do
   A scenario fixes the topology, the seed, the node that originates a new
   value, and the network conditions. Two runs of the same scenario produce
   the same event trace, the same convergence time, and the same history.
+
+  The `mode` field selects the payload the nodes gossip about:
+
+    * `:rumor` - a single value with a version, seeded by the origin node
+    * `:counter` - a grow-only counter, grown by increment fault actions
+
+  Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
+  per node id and merges peer state with element-wise max. The counter total
+  is the sum of the cells, and every node converges to the same total.
   """
 
   defstruct id: :line,
@@ -18,13 +27,17 @@ defmodule SignalGarden.Sim.Scenario do
             drop_prob: 0.0,
             gossip_interval_ms: 90,
             partitions: %{},
-            fault_schedule: []
+            fault_schedule: [],
+            mode: :rumor
+
+  @type mode :: :rumor | :counter
 
   @type partition_change ::
           {:merge, :all}
           | {:assign, pos_integer(), integer()}
           | {:crash, pos_integer()}
           | {:restart, pos_integer()}
+          | {:increment, pos_integer(), pos_integer()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 
@@ -40,6 +53,7 @@ defmodule SignalGarden.Sim.Scenario do
           drop_prob: float(),
           gossip_interval_ms: non_neg_integer(),
           partitions: %{pos_integer() => integer()},
-          fault_schedule: [fault()]
+          fault_schedule: [fault()],
+          mode: mode()
         }
 end

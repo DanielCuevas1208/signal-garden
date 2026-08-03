@@ -432,6 +432,16 @@ body {
   user-select: none;
 }
 
+.sg-node__value {
+  fill: var(--sg-signal-2);
+  font-size: 12px;
+  font-weight: 700;
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
 .sg-node__down {
   stroke: var(--sg-fault);
   stroke-width: 2;
@@ -747,6 +757,16 @@ body {
 .sg-btn--heal:hover:not(:disabled) {
   border-color: rgba(52, 211, 153, 0.7);
   background: rgba(52, 211, 153, 0.1);
+}
+
+.sg-btn--write {
+  border-color: rgba(196, 181, 253, 0.45);
+  color: #c4b5fd;
+}
+
+.sg-btn--write:hover:not(:disabled) {
+  border-color: rgba(196, 181, 253, 0.8);
+  background: rgba(196, 181, 253, 0.12);
 }
 
 .sg-faults__note {

@@ -100,3 +100,31 @@ d = crash.()
 
 IO.puts("crash determinism: convergence_time equal = #{c.convergence_time == d.convergence_time}")
 IO.puts("crash determinism: event_log equal        = #{c.event_log == d.event_log}")
+
+# Determinism check: the counter scenario must converge to the same total.
+counter = fn ->
+  Scenarios.fetch(:counter)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+e = counter.()
+f = counter.()
+
+IO.puts(
+  "counter determinism: convergence_time equal = #{e.convergence_time == f.convergence_time}"
+)
+
+IO.puts("counter determinism: counter_total equal  = #{e.increments_total == f.increments_total}")
+IO.puts("counter determinism: event_log equal      = #{e.event_log == f.event_log}")

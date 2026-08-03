@@ -21,17 +21,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17.3"
           otp-version: "27"
-          version-type: strict
+          # Loose matching keeps the OTP 27 major while following the latest
+          # available patch on the mirror. Strict matching for "27" fails when
+          # the mirror only lists full patch versions such as 27.3.4.15.
+          version-type: loose
 
       - name: Restore dependencies cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             deps

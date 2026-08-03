@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -57,6 +57,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "gossip_interval_ms" => scenario.gossip_interval_ms,
       "partitions" => encode_partitions(scenario.partitions),
       "fault_schedule" => Enum.map(scenario.fault_schedule, &encode_fault/1),
+      "mode" => Atom.to_string(scenario.mode),
       "topology" => encode_topology(scenario.topology)
     }
   end
@@ -92,6 +93,16 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     %{"at" => at, "action" => "restart", "node" => node, "label" => label}
   end
 
+  defp encode_fault(%{at: at, action: {:increment, node, amount}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "increment",
+      "node" => node,
+      "amount" => amount,
+      "label" => label
+    }
+  end
+
   defp encode_topology(%Topology{} = topology) do
     %{
       "id" => Atom.to_string(topology.id),
@@ -122,7 +133,8 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          {:ok, gossip_interval_ms} <-
            require_pos_int(map["gossip_interval_ms"], "gossip_interval_ms"),
          {:ok, partitions} <- decode_partitions_result(map["partitions"] || %{}),
-         {:ok, fault_schedule} <- decode_fault_schedule(map["fault_schedule"] || []) do
+         {:ok, fault_schedule} <- decode_fault_schedule(map["fault_schedule"] || []),
+         {:ok, mode} <- decode_mode(map) do
       {:ok,
        %Scenario{
          id: parse_id(map["id"]),
@@ -136,7 +148,8 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          drop_prob: drop_prob,
          gossip_interval_ms: gossip_interval_ms,
          partitions: partitions,
-         fault_schedule: fault_schedule
+         fault_schedule: fault_schedule,
+         mode: mode
        }}
     end
   end
@@ -202,7 +215,22 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     {:ok, %{at: at, action: {:restart, node}, label: label}}
   end
 
+  defp decode_fault(%{"at" => at, "action" => "increment", "node" => node} = map)
+       when is_integer(at) and is_integer(node) do
+    amount = Map.get(map, "amount", 1)
+
+    if is_integer(amount) and amount > 0 do
+      {:ok, %{at: at, action: {:increment, node, amount}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
+
+  defp decode_mode(%{"mode" => "counter"}), do: {:ok, :counter}
+  defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
+  defp decode_mode(_), do: {:ok, :rumor}
 
   defp parse_id(nil), do: :imported
 

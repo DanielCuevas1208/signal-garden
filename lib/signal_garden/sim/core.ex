@@ -41,9 +41,25 @@ defmodule SignalGarden.Sim.Core do
 
   `:exhausted` is a fault condition. It means a scenario can never converge,
   usually because a permanent partition separated the origin from the rest.
+
+  ## Modes
+
+  A scenario runs in one of two modes.
+
+  The `:rumor` mode (the default) gossips one value with a version. The origin
+  node seeds the value, and a node becomes informed when it holds that exact
+  version.
+
+  The `:counter` mode gossips a grow-only counter. Each node keeps one cell per
+  node id. An increment action adds to the cell of the writing node, and a
+  message carries the sender's whole cell map. On delivery the receiver merges
+  with element-wise max, so every node converges to the same total. A node is
+  informed when its own total equals the total of all increments issued so far.
+  Convergence requires that every scheduled increment has been issued.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
+  @type mode :: :rumor | :counter
 
   @type event ::
           {:gossip, pos_integer()}
@@ -70,6 +86,10 @@ defmodule SignalGarden.Sim.Core do
     gossip_interval_ms: 90,
     origin: 1,
     latest: %{value: 100, version: 1},
+    mode: :rumor,
+    increments_issued: 0,
+    increments_total: 0,
+    increment_target: 0,
     rng: nil,
     informed: MapSet.new(),
     history: [],
@@ -100,12 +120,16 @@ defmodule SignalGarden.Sim.Core do
       nodes: nodes,
       rng: rng,
       origin: scenario.origin,
-      latest: %{value: scenario.latest_value, version: 1},
+      latest: latest_for(scenario),
+      mode: scenario.mode,
+      increments_issued: 0,
+      increments_total: 0,
+      increment_target: scheduled_increments(scenario),
       delay_ms: scenario.delay_ms,
       drop_prob: scenario.drop_prob,
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
-      informed: MapSet.new([scenario.origin]),
+      informed: initial_informed(scenario),
       log_size: 80
     }
 
@@ -115,15 +139,39 @@ defmodule SignalGarden.Sim.Core do
     |> record_history()
   end
 
+  defp latest_for(%SignalGarden.Sim.Scenario{mode: :counter}), do: %{value: 0, version: 0}
+
+  defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
+    do: %{value: value, version: 1}
+
+  defp scheduled_increments(%SignalGarden.Sim.Scenario{mode: :counter} = scenario) do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:increment, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_increments(_scenario), do: 0
+
+  defp initial_informed(%SignalGarden.Sim.Scenario{mode: :counter}), do: MapSet.new()
+
+  defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
+    do: MapSet.new([origin])
+
   defp build_nodes(topology, scenario) do
     origin = scenario.origin
 
     Enum.reduce(topology.nodes, %{}, fn id, acc ->
       known =
-        if id == origin do
-          %{origin => %{version: 1, value: scenario.latest_value}}
-        else
-          %{origin => %{version: 0, value: nil}}
+        case scenario.mode do
+          :counter ->
+            %{origin => %{cells: %{}}}
+
+          _ ->
+            if id == origin do
+              %{origin => %{version: 1, value: scenario.latest_value}}
+            else
+              %{origin => %{version: 0, value: nil}}
+            end
         end
 
       Map.put(acc, id, %{
@@ -131,7 +179,7 @@ defmodule SignalGarden.Sim.Core do
         up: true,
         known: known,
         neighbors: Map.get(topology.adjacency, id, []),
-        informed: id == origin
+        informed: scenario.mode == :rumor and id == origin
       })
     end)
   end
@@ -197,6 +245,11 @@ defmodule SignalGarden.Sim.Core do
     restart_node(state, node)
   end
 
+  def command(%__MODULE__{mode: :counter} = state, {:increment, node, amount})
+      when is_integer(node) and is_integer(amount) and amount > 0 do
+    apply_increment(state, node, amount, true)
+  end
+
   def command(%__MODULE__{} = state, {:toggle_partition, node}) do
     current = Map.get(state.partitions, node, 0)
     next = if current == 0, do: 1, else: 0
@@ -222,7 +275,7 @@ defmodule SignalGarden.Sim.Core do
   defp crash_node(%__MODULE__{} = state, node) do
     nodes = put_in(state.nodes, [node, :up], false)
     nodes = put_in(nodes, [node, :informed], false)
-    nodes = put_in(nodes, [node, :known], %{state.origin => %{version: 0, value: nil}})
+    nodes = put_in(nodes, [node, :known], empty_known(state))
 
     state = %{
       state
@@ -236,7 +289,7 @@ defmodule SignalGarden.Sim.Core do
   defp restart_node(%__MODULE__{} = state, node) do
     nodes = put_in(state.nodes, [node, :up], true)
     nodes = put_in(nodes, [node, :informed], false)
-    nodes = put_in(nodes, [node, :known], %{state.origin => %{version: 0, value: nil}})
+    nodes = put_in(nodes, [node, :known], empty_known(state))
 
     state = %{state | nodes: nodes}
 
@@ -245,12 +298,33 @@ defmodule SignalGarden.Sim.Core do
     |> push_event(state.clock + 1, {:gossip, node})
   end
 
+  defp empty_known(%__MODULE__{mode: :counter, origin: origin}),
+    do: %{origin => %{cells: %{}}}
+
+  defp empty_known(%__MODULE__{origin: origin}),
+    do: %{origin => %{version: 0, value: nil}}
+
   defp log_fault(%__MODULE__{} = state, kind, node) do
     entry = %{
       t: state.clock,
       kind: kind,
       from: node,
       to: nil,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_increment(%__MODULE__{} = state, node, amount) do
+    entry = %{
+      t: state.clock,
+      kind: :increment,
+      from: node,
+      to: nil,
+      amount: amount,
       partition: false
     }
 
@@ -310,6 +384,21 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
+    case state.mode do
+      :counter -> deliver_counter(state, to, payload)
+      _ -> deliver_rumor(state, to, payload)
+    end
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:increment, node, amount}}) do
+    apply_increment(state, node, amount, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, action}) do
+    command(state, action)
+  end
+
+  defp deliver_rumor(%__MODULE__{} = state, to, payload) do
     node = state.nodes[to]
 
     if not node.up do
@@ -341,8 +430,19 @@ defmodule SignalGarden.Sim.Core do
     end
   end
 
-  defp handle_event(%__MODULE__{} = state, {:fault, action}) do
-    command(state, action)
+  defp deliver_counter(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      cells = merge_counter(current.cells, payload.cells)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{cells: cells})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
   end
 
   defp forward_rumor(%__MODULE__{} = state, node) do
@@ -409,12 +509,94 @@ defmodule SignalGarden.Sim.Core do
       state.convergence_time != nil ->
         state
 
-      reached >= total and total > 0 ->
+      reached >= total and total > 0 and counter_done?(state) ->
         %{state | status: :converged, convergence_time: state.clock}
 
       true ->
         state
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # counter mode (grow-only counter)
+  # ---------------------------------------------------------------------------
+
+  defp apply_increment(%__MODULE__{mode: :counter} = state, node, amount, bump_target?) do
+    issued = state.increments_issued + 1
+    total = state.increments_total + amount
+    target = if bump_target?, do: state.increment_target + 1, else: state.increment_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    cells =
+      get_in(state.nodes, [node, :known, state.origin, :cells])
+      |> Map.update(node, amount, &(&1 + amount))
+
+    state = %{
+      state
+      | increments_issued: issued,
+        increments_total: total,
+        increment_target: target,
+        latest: %{value: total, version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{cells: cells})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_increment(node, amount)
+  end
+
+  # A manual increment after the run finished re-arms the run so the new write
+  # can be watched. Clearing the convergence time lets the core converge again.
+  # Scheduled increments leave the status untouched.
+  defp rearm(status, _time, true) when status in [:converged, :exhausted], do: {:idle, nil}
+  defp rearm(status, time, _), do: {status, time}
+
+  defp merge_counter(cells_a, cells_b) do
+    Map.merge(cells_a, cells_b, fn _node, a, b -> max(a, b) end)
+  end
+
+  defp counter_total(%{known: known}, origin) do
+    known[origin].cells
+    |> Map.values()
+    |> Enum.sum()
+  end
+
+  defp counter_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+
+    node.up and
+      state.increments_issued >= state.increment_target and
+      counter_total(node, state.origin) == state.increments_total
+  end
+
+  defp counter_done?(%__MODULE__{mode: :counter} = state) do
+    state.increments_issued >= state.increment_target
+  end
+
+  defp counter_done?(_state), do: true
+
+  defp refresh_node_informed(%__MODULE__{} = state, node_id) do
+    informed? = counter_informed?(state, node_id)
+
+    nodes = put_in(state.nodes, [node_id, :informed], informed?)
+
+    informed =
+      if informed?,
+        do: MapSet.put(state.informed, node_id),
+        else: MapSet.delete(state.informed, node_id)
+
+    %{state | nodes: nodes, informed: informed}
+  end
+
+  defp refresh_all_informed(%__MODULE__{} = state) do
+    Enum.reduce(state.topology.nodes, state, fn node_id, acc ->
+      refresh_node_informed(acc, node_id)
+    end)
   end
 
   # ---------------------------------------------------------------------------
@@ -543,6 +725,9 @@ defmodule SignalGarden.Sim.Core do
       convergence_time: state.convergence_time,
       origin: state.origin,
       latest: state.latest,
+      mode: state.mode,
+      counter_total: state.increments_total,
+      counter_writes: state.increments_issued,
       delay_ms: state.delay_ms,
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
@@ -569,10 +754,24 @@ defmodule SignalGarden.Sim.Core do
         informed: node.informed,
         is_origin: id == state.origin,
         partition: Map.get(state.partitions, id, 0),
-        value: get_in(node, [Access.key(:known), state.origin, Access.key(:value)]),
-        version: get_in(node, [Access.key(:known), state.origin, Access.key(:version)])
+        value: node_value(state, node),
+        version: node_version(state, node)
       }
     end)
+  end
+
+  defp node_value(%__MODULE__{mode: :counter, origin: origin}, node) do
+    Enum.sum(Map.values(node.known[origin].cells))
+  end
+
+  defp node_value(%__MODULE__{origin: origin}, node) do
+    get_in(node, [Access.key(:known), origin, Access.key(:value)])
+  end
+
+  defp node_version(%__MODULE__{mode: :counter} = state, _node), do: state.increments_issued
+
+  defp node_version(%__MODULE__{origin: origin}, node) do
+    get_in(node, [Access.key(:known), origin, Access.key(:version)])
   end
 
   defp snapshot_edges(%__MODULE__{} = state) do

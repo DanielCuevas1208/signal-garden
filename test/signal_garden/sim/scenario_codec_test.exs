@@ -79,6 +79,28 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert state.status == :converged
   end
 
+  test "the sample counter file loads and converges to the expected total" do
+    path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "counter.json"])
+    json = File.read!(path)
+    assert {:ok, scenario} = ScenarioCodec.decode(json)
+    assert scenario.name == "Grow-only counter"
+    assert scenario.mode == :counter
+
+    state =
+      scenario
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+
+    assert state.status == :converged
+    assert state.increments_total == 9
+  end
+
   test "crash and restart faults round-trip through JSON" do
     scenario = Scenarios.crash()
     json = ScenarioCodec.encode(scenario)
@@ -107,5 +129,44 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     end
 
     assert run.(scenario).convergence_time == run.(decoded).convergence_time
+  end
+
+  test "counter mode and increment faults round-trip through JSON" do
+    scenario = Scenarios.counter()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.mode == :counter
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:increment, 1, 2} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "a decoded counter scenario converges to the same total" do
+    scenario = Scenarios.counter()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).increments_total == run.(decoded).increments_total
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+  end
+
+  test "files without a mode field decode as rumor mode" do
+    scenario = %{Scenarios.line() | id: :custom_demo, name: "Legacy"}
+    json = ScenarioCodec.encode(scenario)
+    json = String.replace(json, ~s("mode": "rumor",), "")
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+    assert decoded.mode == :rumor
   end
 end

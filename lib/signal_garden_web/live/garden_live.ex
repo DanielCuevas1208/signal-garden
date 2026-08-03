@@ -115,6 +115,11 @@ defmodule SignalGardenWeb.GardenLive do
     {:noreply, socket}
   end
 
+  def handle_event("increment", %{"node" => node_id}, socket) do
+    Sim.increment(parse_int(node_id, 1))
+    {:noreply, socket}
+  end
+
   def handle_event("select_fault_node", %{"node" => node_id}, socket) do
     {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
   end
