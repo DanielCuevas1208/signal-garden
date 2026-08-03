@@ -101,15 +101,25 @@ defmodule SignalGarden.Sim.Core do
     hops: 0,
     dropped: 0,
     delivered: 0,
-    log_size: 80
+    log_size: 80,
+    history_size: 80
   )
 
   # ---------------------------------------------------------------------------
   # construction
   # ---------------------------------------------------------------------------
 
-  @doc "Build a fresh core state from a scenario struct."
-  def new(%SignalGarden.Sim.Scenario{} = scenario) do
+  @doc """
+  Build a fresh core state from a scenario struct.
+
+  The `:log_size` option caps the retained event log, and `:history_size`
+  caps the convergence history. Both default to 80, which suits the control
+  room. Pass `:infinity` to keep the entire event trace, which headless
+  replay needs.
+  """
+  def new(%SignalGarden.Sim.Scenario{} = scenario, opts \\ []) do
+    log_size = Keyword.get(opts, :log_size, 80)
+    history_size = Keyword.get(opts, :history_size, 80)
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
@@ -130,7 +140,8 @@ defmodule SignalGarden.Sim.Core do
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
       informed: initial_informed(scenario),
-      log_size: 80
+      log_size: log_size,
+      history_size: history_size
     }
 
     state
@@ -313,8 +324,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
   end
 
@@ -328,8 +338,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
   end
 
@@ -611,15 +620,9 @@ defmodule SignalGarden.Sim.Core do
       steps: state.steps
     }
 
-    history = state.history ++ [point]
-
-    history =
-      if length(history) > state.log_size do
-        Enum.take(history, -state.log_size)
-      else
-        history
-      end
-
+    # History is stored newest-first so appending stays O(1). Snapshots
+    # reverse it back into chronological order for the chart.
+    history = trim_history([point | state.history], state.history_size)
     %{state | history: history, steps: state.steps + 1}
   end
 
@@ -632,9 +635,17 @@ defmodule SignalGarden.Sim.Core do
       partition: Map.get(state.partitions, from, 0) != Map.get(state.partitions, to, 0)
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
+  end
+
+  defp trim_log(log, :infinity), do: log
+  defp trim_log(log, size), do: Enum.take(log, size)
+
+  defp trim_history(history, :infinity), do: history
+
+  defp trim_history(history, size) do
+    if length(history) > size, do: Enum.take(history, size), else: history
   end
 
   defp tap_edge(%__MODULE__{} = state, key, kind) do
@@ -734,7 +745,7 @@ defmodule SignalGarden.Sim.Core do
       partitions: state.partitions,
       nodes: snapshot_nodes(state),
       edges: snapshot_edges(state),
-      history: state.history,
+      history: Enum.reverse(state.history),
       event_log: Enum.reverse(state.event_log),
       reached: MapSet.size(state.informed),
       total: map_size(state.nodes)

@@ -59,3 +59,10 @@ jobs:
 
       - name: Run tests
         run: mix test
+
+      - name: Replay scenarios from the CLI
+        run: |
+          mix sg.replay ring --checks --no-trace
+          mix sg.replay counter --no-trace
+          mix sg.replay priv/scenarios/ring.json --steps 200 --json > /tmp/ring-replay.json
+          test -s /tmp/ring-replay.json

@@ -24,6 +24,25 @@ defmodule SignalGarden.Sim.CoreTest do
     assert a.event_log == b.event_log
   end
 
+  test "an unbounded event log keeps every message" do
+    state =
+      Scenarios.fetch(:ring)
+      |> Core.new(log_size: :infinity)
+      |> run_to_converge()
+
+    assert length(state.event_log) == state.hops
+    assert state.hops > 80
+  end
+
+  test "the default event log is capped" do
+    state =
+      Scenarios.fetch(:ring)
+      |> Core.new()
+      |> run_to_converge()
+
+    assert length(state.event_log) <= 80
+  end
+
   test "different seeds produce different convergence traces" do
     a = run_to_completion(:ring)
 

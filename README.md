@@ -29,11 +29,14 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    replay.ex         # Headless runner that prints a full deterministic trace.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
+lib/mix/tasks/
+  sg.replay.ex        # CLI task that wraps the headless replay runner.
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
@@ -48,6 +51,10 @@ touches the network, so tests stay fast and deterministic.
 
 The web layer lives in `lib/signal_garden_web/`. A single LiveView renders the
 control room. Plain HEEx templates use hand-written CSS classes, not a UI kit.
+
+The `Replay` module runs the same core with no GenServer and no browser. It
+keeps the entire event log, so a CLI run prints every hazard the network
+applied. The `mix sg.replay` task wraps it for the terminal.
 
 ## Setup
 
@@ -95,6 +102,81 @@ requires `format: 1` and a `topology` block with `nodes`, `edges`, and
 alias SignalGarden.Sim.ScenarioCodec
 {:ok, scenario} = File.read!("priv/scenarios/ring.json") |> ScenarioCodec.decode()
 ```
+
+## Headless replay
+
+The `mix sg.replay` task runs a scenario without a browser. It prints a
+summary and the full event trace. Two runs of the same scenario print the
+same bytes. Use it to share, audit, or diff a run.
+
+Pass a catalog id, a path to a scenario file, or inline scenario JSON:
+
+```
+mix sg.replay ring
+mix sg.replay counter --checks
+mix sg.replay priv/scenarios/ring.json --no-trace
+mix sg.replay lossy --steps 400 --json
+```
+
+Options:
+
+- `--steps N` runs at most N events.
+- `--limit N` prints at most N trace lines.
+- `--no-trace` prints the summary only.
+- `--checks` replays twice and reports determinism.
+- `--json` prints the result as JSON for other tools.
+
+The runner drives the pure `Core` module. It needs no animation loop and no
+server. The trace lists every delivery, drop, crash, restart, and increment.
+
+Sample ring replay with `--limit 8`:
+
+```
+Replay: Ring (ring)
+  12 nodes, seed 2, mode rumor
+
+  status          converged
+  logical time    750 ms
+  hops            120
+  delivered       115
+  dropped         0
+  steps           236
+  reached         12 / 12
+
+Trace (120 events)
+T=1 5 -> 6 delivered
+T=1 10 -> 11 delivered
+T=2 1 -> 2 delivered
+T=2 6 -> 5 delivered
+T=2 11 -> 12 delivered
+T=3 2 -> 3 delivered
+T=3 7 -> 8 delivered
+T=3 12 -> 11 delivered
+```
+
+The counter replay with `--checks` confirms the run is reproducible:
+
+```
+Replay: Grow-only counter (counter)
+  12 nodes, seed 21, mode counter
+
+  status          converged
+  logical time    3.83 s
+  hops            617
+  delivered       614
+  dropped         44
+  steps           1281
+  reached         12 / 12
+  counter total   9
+
+Determinism (two replays)
+  convergence_time equal = true
+  trace equal            = true
+  history equal          = true
+```
+
+The `--json` flag writes machine-readable output. Pipe it to `jq` or any
+other tool.
 
 ## Built-in scenarios
 
@@ -215,11 +297,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 90 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, and the
+headless replay runner. It also covers the engine GenServer, the Mix task,
+and the LiveView. Tests never sleep and never read the wall clock. Each core
+test replays a scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -246,7 +328,7 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. The `mix sg.replay` task runs any scenario from the CLI and prints a deterministic trace.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
