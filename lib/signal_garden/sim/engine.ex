@@ -21,6 +21,7 @@ defmodule SignalGarden.Sim.Engine do
   defstruct core: nil,
             frame_ms: 60,
             burst: 6,
+            log_size: 80,
             loop_ref: nil
 
   # ---------------------------------------------------------------------------
@@ -72,7 +73,8 @@ defmodule SignalGarden.Sim.Engine do
 
     state = %__MODULE__{
       frame_ms: Keyword.get(config, :frame_ms, 60),
-      burst: Keyword.get(config, :burst, 6)
+      burst: Keyword.get(config, :burst, 6),
+      log_size: Keyword.get(config, :log_size, 80)
     }
 
     initial = Keyword.get(opts, :scenario, :line)
@@ -219,7 +221,11 @@ defmodule SignalGarden.Sim.Engine do
   end
 
   defp load_scenario_data_into(state, scenario) do
-    %{state | core: Core.new(scenario), loop_ref: cancel_loop(state.loop_ref)}
+    %{
+      state
+      | core: Core.new(scenario, log_size: state.log_size),
+        loop_ref: cancel_loop(state.loop_ref)
+    }
   end
 
   defp schedule_loop(%__MODULE__{} = state) do

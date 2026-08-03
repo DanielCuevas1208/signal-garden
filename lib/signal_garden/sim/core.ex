@@ -108,8 +108,17 @@ defmodule SignalGarden.Sim.Core do
   # construction
   # ---------------------------------------------------------------------------
 
-  @doc "Build a fresh core state from a scenario struct."
-  def new(%SignalGarden.Sim.Scenario{} = scenario) do
+  @doc """
+  Build a fresh core state from a scenario struct.
+
+  Options:
+
+    * `:log_size` - how many event log and history entries to keep. Defaults
+      to 80. Pass `:infinity` to keep the full trace for headless replay.
+  """
+  def new(%SignalGarden.Sim.Scenario{} = scenario, opts \\ []) do
+    log_size = Keyword.get(opts, :log_size, 80)
+
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
@@ -130,7 +139,7 @@ defmodule SignalGarden.Sim.Core do
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
       informed: initial_informed(scenario),
-      log_size: 80
+      log_size: log_size
     }
 
     state
@@ -313,8 +322,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
   end
 
@@ -328,8 +336,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
   end
 
@@ -614,10 +621,10 @@ defmodule SignalGarden.Sim.Core do
     history = state.history ++ [point]
 
     history =
-      if length(history) > state.log_size do
-        Enum.take(history, -state.log_size)
-      else
-        history
+      case state.log_size do
+        :infinity -> history
+        size when length(history) > size -> Enum.take(history, -size)
+        _ -> history
       end
 
     %{state | history: history, steps: state.steps + 1}
@@ -632,10 +639,12 @@ defmodule SignalGarden.Sim.Core do
       partition: Map.get(state.partitions, from, 0) != Map.get(state.partitions, to, 0)
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
+    log = trim_log([entry | state.event_log], state.log_size)
     %{state | event_log: log}
   end
+
+  defp trim_log(log, :infinity), do: log
+  defp trim_log(log, size), do: Enum.take(log, size)
 
   defp tap_edge(%__MODULE__{} = state, key, kind) do
     %{state | edge_activity: Map.put(state.edge_activity, key, {state.clock, kind})}

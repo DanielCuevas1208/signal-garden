@@ -19,6 +19,7 @@ the same fault on another machine.
 - A grow-only counter (G-Counter) that converges across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
+- A CLI replay tool that reproduces any run without a browser.
 
 ## Architecture
 
@@ -29,11 +30,15 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    replay.ex         # Headless replay. Drives the core and renders traces.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
+
+lib/mix/tasks/
+  signal_garden.replay.ex # CLI for the headless replay tool.
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
@@ -45,6 +50,10 @@ The `Engine` GenServer owns a `Core` struct. On each animation frame it advances
 the core by a burst of events and broadcasts a snapshot over Phoenix PubSub.
 The LiveView subscribes to that topic and re-renders the graph. The core never
 touches the network, so tests stay fast and deterministic.
+
+The `Replay` module drives the same `Core` from the command line. It renders
+summary tables, full event traces, and JSON, and it verifies determinism.
+The browser and the CLI share one driver, so both views stay in sync.
 
 The web layer lives in `lib/signal_garden_web/`. A single LiveView renders the
 control room. Plain HEEx templates use hand-written CSS classes, not a UI kit.
@@ -96,6 +105,69 @@ alias SignalGarden.Sim.ScenarioCodec
 {:ok, scenario} = File.read!("priv/scenarios/ring.json") |> ScenarioCodec.decode()
 ```
 
+## Headless replay tool
+
+The `signal_garden.replay` Mix task runs scenarios from the command line.
+It drives the pure core with no browser and no server. Two runs of the
+same scenario print the same bytes.
+
+Replay every catalog scenario:
+
+```
+mix signal_garden.replay
+```
+
+Replay one scenario and print its event trace:
+
+```
+mix signal_garden.replay --trace ring
+```
+
+The trace lists every network send. Each line shows the logical time, the
+kind, the sender, the receiver, and the partition flag:
+
+```
+      t kind                from    to partition amount
+      1 deliver                5     6 false
+      1 deliver               10    11 false
+      2 deliver                1     2 false
+      2 deliver                6     5 false
+      2 deliver               11    12 false
+      3 deliver                2     3 false
+```
+
+A dropped message appears as `dropped-loss` or `dropped-partition`. A
+scheduled write appears as `increment`. A crash or restart appears as
+`crashed` or `restarted`.
+
+Replay an exported file from disk:
+
+```
+mix signal_garden.replay priv/scenarios/counter.json
+```
+
+Print machine-readable JSON for a pipeline:
+
+```
+mix signal_garden.replay --json ring
+```
+
+Override the seed to explore a different random walk:
+
+```
+mix signal_garden.replay ring --seed 99
+```
+
+List the catalog and prove determinism:
+
+```
+mix signal_garden.replay --list
+mix signal_garden.replay --verify
+```
+
+The `--verify` flag replays every catalog scenario twice. It stops with a
+non-zero code when any two runs differ. CI runs this check on every push.
+
 ## Built-in scenarios
 
 The scenario catalog ships with nine runs. Each one fixes a topology, a seed,
@@ -136,37 +208,42 @@ write survives only the current run. Reset rebuilds the scenario from its seed.
 
 ## Sample output
 
-The block below is real output from a deterministic run of every scenario. It
-was produced with the `Core` module only, with no animation loop and no
-browser. Reproduce it with the command below.
+The block below is real output from a deterministic replay of every catalog
+scenario. The Replay module produced it with no animation loop and no
+browser. `hops` counts messages that leave a sender. `delivered` counts
+messages that arrive at a live node.
 
 ```
-scenario            nodes  status       t(ms)     hops   dropped   steps
-Line                8      converged    772       72     0         142
-Ring                12     converged    750       120    0         236
-Grid                30     converged    1295      564    0         1112
-Random graph        16     converged    715       160    0         312
-Healing partition   14     converged    1397      198    51        446
-Churn               15     converged    731       152    4         309
-Lossy link          14     converged    594       120    6         237
-Crash and recover   12     converged    1815      269    24        540
-Grow-only counter   12     converged    3832      617    44        1281
+scenario              nodes status            t(ms)   hops  delivered  dropped  steps
+Line                      8 converged           772     72         69        0    142
+Ring                     12 converged           750    120        115        0    236
+Grid                     30 converged          1295    564        547        0   1112
+Random graph             16 converged           715    160        151        0    312
+Healing partition        14 converged          1397    198        192       51    446
+Churn                    15 converged           731    152        146        4    309
+Lossy link               14 converged           594    120        110        6    237
+Crash and recover        12 converged          1815    269        240       24    540
+Grow-only counter        12 converged          3832    617        614       44   1281
 ```
 
-The determinism check confirms the core is reproducible:
+The determinism check replays every catalog scenario twice. All nine runs
+are reproducible:
 
 ```
-ring determinism: convergence_time equal = true
-ring determinism: history equal          = true
-ring determinism: event_log equal        = true
-crash determinism: convergence_time equal = true
-crash determinism: event_log equal        = true
-counter determinism: convergence_time equal = true
-counter determinism: counter_total equal  = true
-counter determinism: event_log equal      = true
+line                deterministic
+ring                deterministic
+grid                deterministic
+random              deterministic
+split               deterministic
+churn               deterministic
+lossy               deterministic
+crash               deterministic
+counter             deterministic
+all scenarios deterministic = true
 ```
 
-Reproduce this output from a checkout with:
+Reproduce the table with `mix signal_garden.replay`. Reproduce the full block,
+including the determinism report, with:
 
 ```
 mix run --no-start priv/sample.exs
@@ -215,11 +292,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 100 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, and the
+headless replay tool. It also covers the engine GenServer and the LiveView.
+Tests never sleep and never read the wall clock. Each core test replays a
+scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -238,6 +315,7 @@ mix precommit
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
+- The replay tool stops a run after one million logical events and reports a timeout.
 
 ## Roadmap
 
@@ -246,8 +324,9 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. The `signal_garden.replay` task prints tables, traces, and JSON, and verifies determinism.
 - **Edge-level partitions.** Cut a single link instead of a node group.
+- **Seed fuzzing.** Sweep many seeds and report the slowest and fastest convergence.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
 ## License
