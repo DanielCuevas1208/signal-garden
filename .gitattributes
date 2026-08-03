@@ -1,0 +1,10 @@
+# Normalise line endings across platforms.
+# The repository stores text files with LF endings.
+* text=auto eol=lf
+
+# Binary files must never be re-encoded.
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

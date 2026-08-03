@@ -35,7 +35,10 @@ defmodule SignalGarden.Sim.Engine do
   def snapshot, do: GenServer.call(__MODULE__, :snapshot)
   def export_scenario, do: GenServer.call(__MODULE__, :export_scenario)
   def load_scenario(id), do: GenServer.call(__MODULE__, {:load_scenario, id})
-  def load_scenario_struct(scenario), do: GenServer.call(__MODULE__, {:load_scenario_struct, scenario})
+
+  def load_scenario_struct(scenario),
+    do: GenServer.call(__MODULE__, {:load_scenario_struct, scenario})
+
   def start_run, do: GenServer.cast(__MODULE__, :start_run)
   def pause, do: GenServer.cast(__MODULE__, :pause)
   def step(count \\ 1), do: GenServer.cast(__MODULE__, {:step, count})
@@ -52,6 +55,9 @@ defmodule SignalGarden.Sim.Engine do
     do: GenServer.cast(__MODULE__, {:command, {:assign, node, group}})
 
   def merge, do: GenServer.cast(__MODULE__, {:command, {:merge, :all}})
+
+  def crash(node), do: GenServer.cast(__MODULE__, {:command, {:crash, node}})
+  def restart(node), do: GenServer.cast(__MODULE__, {:command, {:restart, node}})
 
   # ---------------------------------------------------------------------------
   # gen server callbacks

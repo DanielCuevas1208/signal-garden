@@ -78,4 +78,34 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
 
     assert state.status == :converged
   end
+
+  test "crash and restart faults round-trip through JSON" do
+    scenario = Scenarios.crash()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:crash, 4} in Enum.map(decoded.fault_schedule, & &1.action)
+    assert {:restart, 9} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "an exported crash scenario replays to the same trace" do
+    scenario = Scenarios.crash()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+  end
 end

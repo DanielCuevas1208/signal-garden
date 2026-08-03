@@ -23,6 +23,8 @@ defmodule SignalGarden.Sim.Scenario do
   @type partition_change ::
           {:merge, :all}
           | {:assign, pos_integer(), integer()}
+          | {:crash, pos_integer()}
+          | {:restart, pos_integer()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 

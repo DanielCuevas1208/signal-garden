@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -84,6 +84,14 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     }
   end
 
+  defp encode_fault(%{at: at, action: {:crash, node}, label: label}) do
+    %{"at" => at, "action" => "crash", "node" => node, "label" => label}
+  end
+
+  defp encode_fault(%{at: at, action: {:restart, node}, label: label}) do
+    %{"at" => at, "action" => "restart", "node" => node, "label" => label}
+  end
+
   defp encode_topology(%Topology{} = topology) do
     %{
       "id" => Atom.to_string(topology.id),
@@ -111,7 +119,8 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          {:ok, latest_value} <- require_number(map["latest_value"], "latest_value"),
          {:ok, delay_ms} <- decode_delay_result(map["delay_ms"]),
          {:ok, drop_prob} <- require_float_range(map["drop_prob"], "drop_prob", 0.0, 1.0),
-         {:ok, gossip_interval_ms} <- require_pos_int(map["gossip_interval_ms"], "gossip_interval_ms"),
+         {:ok, gossip_interval_ms} <-
+           require_pos_int(map["gossip_interval_ms"], "gossip_interval_ms"),
          {:ok, partitions} <- decode_partitions_result(map["partitions"] || %{}),
          {:ok, fault_schedule} <- decode_fault_schedule(map["fault_schedule"] || []) do
       {:ok,
@@ -183,6 +192,16 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     {:ok, %{at: at, action: {:assign, node, group}, label: label}}
   end
 
+  defp decode_fault(%{"at" => at, "action" => "crash", "node" => node, "label" => label})
+       when is_integer(at) and is_integer(node) do
+    {:ok, %{at: at, action: {:crash, node}, label: label}}
+  end
+
+  defp decode_fault(%{"at" => at, "action" => "restart", "node" => node, "label" => label})
+       when is_integer(at) and is_integer(node) do
+    {:ok, %{at: at, action: {:restart, node}, label: label}}
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
 
   defp parse_id(nil), do: :imported
@@ -221,8 +240,9 @@ defmodule SignalGarden.Sim.ScenarioCodec do
   defp require_number(value, _field) when is_number(value), do: {:ok, value}
   defp require_number(_, field), do: {:error, {:invalid_field, field}}
 
-  defp require_float_range(value, _field, lo, hi) when is_number(value) and value >= lo and value <= hi,
-    do: {:ok, value * 1.0}
+  defp require_float_range(value, _field, lo, hi)
+       when is_number(value) and value >= lo and value <= hi,
+       do: {:ok, value * 1.0}
 
   defp require_float_range(_, field, _, _), do: {:error, {:invalid_field, field}}
 end

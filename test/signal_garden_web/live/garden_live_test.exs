@@ -61,4 +61,26 @@ defmodule SignalGardenWeb.GardenLiveTest do
     snapshot = SignalGarden.Sim.snapshot()
     assert snapshot.clock >= 0
   end
+
+  test "the fault injector offers crash and restart controls", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#sg-fault-node")
+    assert has_element?(view, "button", "Crash")
+    assert has_element?(view, "button", "Restart")
+
+    view |> render_click("crash", %{"node" => "2"})
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    snapshot = SignalGarden.Sim.snapshot()
+    down = Enum.find(snapshot.nodes, &(&1.id == 2))
+    assert down.up == false
+
+    view |> render_click("restart", %{"node" => "2"})
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    snapshot = SignalGarden.Sim.snapshot()
+    up = Enum.find(snapshot.nodes, &(&1.id == 2))
+    assert up.up == true
+  end
 end

@@ -34,6 +34,7 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
       |> assign(:speed, 6)
+      |> assign(:fault_node, snapshot.origin)
       |> assign(:show_import, false)
       |> assign(:import_json, "")
 
@@ -104,6 +105,20 @@ defmodule SignalGardenWeb.GardenLive do
     {:noreply, socket}
   end
 
+  def handle_event("crash", %{"node" => node_id}, socket) do
+    Sim.crash(parse_int(node_id, 1))
+    {:noreply, socket}
+  end
+
+  def handle_event("restart", %{"node" => node_id}, socket) do
+    Sim.restart(parse_int(node_id, 1))
+    {:noreply, socket}
+  end
+
+  def handle_event("select_fault_node", %{"node" => node_id}, socket) do
+    {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
+  end
+
   def handle_event("merge", _params, socket) do
     Sim.merge()
     {:noreply, socket}
@@ -137,9 +152,15 @@ defmodule SignalGardenWeb.GardenLive do
   end
 
   defp import_error({:invalid_json, _}), do: "The file is not valid JSON."
-  defp import_error({:unsupported_format, version}), do: "Format version #{version} is not supported."
+
+  defp import_error({:unsupported_format, version}),
+    do: "Format version #{version} is not supported."
+
   defp import_error({:invalid_field, field}), do: "The field \"#{field}\" is invalid."
-  defp import_error({:invalid_origin, origin}), do: "Origin node #{origin} is not in the topology."
+
+  defp import_error({:invalid_origin, origin}),
+    do: "Origin node #{origin} is not in the topology."
+
   defp import_error(:missing_format), do: "The file is missing a format version."
   defp import_error(_), do: "The scenario file could not be loaded."
 
