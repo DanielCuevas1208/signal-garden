@@ -68,6 +68,9 @@ defmodule SignalGarden.Sim do
   @doc "Return a crashed node to service."
   def restart(node), do: Engine.restart(node)
 
+  @doc "Add one increment to a node's counter slot. Counter scenarios only."
+  def increment(node), do: Engine.increment(node)
+
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
 end

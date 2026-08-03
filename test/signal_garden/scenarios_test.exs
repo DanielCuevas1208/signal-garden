@@ -23,6 +23,14 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "counter scenarios converge to their declared total count" do
+    for scenario <- Scenarios.catalog(), scenario.mode == :counter do
+      state = await_converge(Core.new(scenario), 200_000)
+      assert state.status == :converged, "scenario #{scenario.id} did not converge"
+      assert Core.snapshot(state).best_value == scenario.latest_value
+    end
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

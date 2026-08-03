@@ -11,6 +11,7 @@ defmodule SignalGarden.Sim.Scenario do
             name: "Line",
             description: "An eight node line.",
             seed: 1,
+            mode: :rumor,
             topology: nil,
             origin: 1,
             latest_value: 100,
@@ -20,11 +21,14 @@ defmodule SignalGarden.Sim.Scenario do
             partitions: %{},
             fault_schedule: []
 
+  @type mode :: :rumor | :counter
+
   @type partition_change ::
           {:merge, :all}
           | {:assign, pos_integer(), integer()}
           | {:crash, pos_integer()}
           | {:restart, pos_integer()}
+          | {:increment, pos_integer()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 
@@ -33,6 +37,7 @@ defmodule SignalGarden.Sim.Scenario do
           name: String.t(),
           description: String.t(),
           seed: integer(),
+          mode: mode(),
           topology: SignalGarden.Sim.Topology.t(),
           origin: pos_integer(),
           latest_value: number(),

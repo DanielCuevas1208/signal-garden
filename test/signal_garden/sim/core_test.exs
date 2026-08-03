@@ -212,6 +212,94 @@ defmodule SignalGarden.Sim.CoreTest do
   end
 
   # ---------------------------------------------------------------------------
+  # grow-only counter (CRDT) mode
+  # ---------------------------------------------------------------------------
+
+  test "a counter scenario merges every increment and converges to the full count" do
+    state = run_to_completion(:counter)
+    assert state.status == :converged
+
+    n = map_size(state.nodes)
+    full = List.duplicate(1, n)
+
+    for {_id, node} <- state.nodes do
+      assert node.known[state.origin].vector == full
+      assert node.informed
+    end
+
+    snap = Core.snapshot(state)
+    assert snap.mode == :counter
+    assert snap.best_value == n
+    assert snap.reached == n
+  end
+
+  test "counter increments made during a partition survive the heal" do
+    state = run_to_completion(:counter_split)
+    assert state.status == :converged
+    assert state.convergence_time > 1800
+
+    snap = Core.snapshot(state)
+    assert snap.best_value == 14
+    assert snap.reached == snap.total
+
+    vector = state.nodes[1].known[state.origin].vector
+    assert Enum.sum(vector) == 14
+    assert Enum.at(vector, 5) == 2
+    assert Enum.at(vector, 6) == 2
+  end
+
+  test "an increment command raises a node's count and logs the event" do
+    state = Core.new(Scenarios.fetch(:counter))
+    state = Core.command(state, {:increment, 3})
+
+    assert Enum.at(state.nodes[3].known[state.origin].vector, 2) == 2
+    assert :increment in Enum.map(state.event_log, & &1.kind)
+    assert Core.snapshot(state).best_value == 2
+  end
+
+  test "a crashed node loses its counter but merged copies survive elsewhere" do
+    state =
+      Core.new(Scenarios.fetch(:counter))
+      |> run_to_converge()
+      |> Core.command({:crash, 3})
+
+    assert state.nodes[3].up == false
+    assert Enum.sum(state.nodes[3].known[state.origin].vector) == 0
+    assert Enum.sum(state.nodes[4].known[state.origin].vector) == 10
+    assert state.nodes[4].informed
+    refute state.nodes[3].informed
+    refute 3 in state.informed
+  end
+
+  test "the counter split scenario replays to the same trace" do
+    a = run_to_completion(:counter_split)
+    b = run_to_completion(:counter_split)
+
+    assert a.convergence_time == b.convergence_time
+    assert a.history == b.history
+    assert a.event_log == b.event_log
+  end
+
+  test "increment is a no-op in rumor mode" do
+    state = Core.new(Scenarios.fetch(:line))
+    state = Core.command(state, {:increment, 2})
+
+    assert get_in(state.nodes, [2, :known, state.origin]).version == 0
+    refute :increment in Enum.map(state.event_log, & &1.kind)
+  end
+
+  test "a fresh counter snapshot reports mode, best value, and per-node counts" do
+    state = Core.new(Scenarios.fetch(:counter))
+    snap = Core.snapshot(state)
+
+    assert snap.mode == :counter
+    assert snap.best_value == 1
+    assert snap.reached == 0
+    assert Enum.all?(snap.nodes, &(&1.value == 1))
+    assert Enum.all?(snap.nodes, &(&1.version == nil))
+  end
+
+  # ---------------------------------------------------------------------------
   # helpers
   # ---------------------------------------------------------------------------
 

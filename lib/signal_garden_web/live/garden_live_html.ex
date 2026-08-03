@@ -138,6 +138,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :dropped_loss -> "text-rose-300"
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
+      :increment -> "text-violet-300"
       _ -> "text-slate-300"
     end
   end
@@ -147,7 +148,20 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:dropped_loss), do: "dropped (loss)"
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
+  def log_label(:increment), do: "counted"
   def log_label(_), do: "event"
+
+  def mode_label(:counter), do: "G-Counter"
+  def mode_label(:rumor), do: "Rumor"
+  def mode_label(_), do: "Rumor"
+
+  def readout_text(%{mode: :counter, reached: reached, total: total}) do
+    "#{reached}/#{total} nodes hold the full counter"
+  end
+
+  def readout_text(%{reached: reached, total: total}) do
+    "#{reached}/#{total} nodes know the latest value"
+  end
 
   def reached_percent(snapshot) do
     if snapshot.total == 0, do: 0, else: round(snapshot.reached * 100 / snapshot.total)
@@ -165,6 +179,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     <div class="sg-graph">
       <div class="sg-graph__bar">
         <div class="sg-legend">
+          <span class="sg-mode-badge">{mode_label(@snapshot.mode)}</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--signal"></i>informed</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
@@ -172,7 +187,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
-          {@snapshot.reached}/{@snapshot.total} nodes know the latest value
+          {readout_text(@snapshot)}
           <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
         </p>
       </div>
@@ -269,6 +284,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
+                  <%= if @snapshot.mode == :counter do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_count(node.id, sg)}
+                      class="sg-node__count"
+                    >
+                      {node.value}
+                    </text>
+                  <% end %>
                 </g>
               </g>
             </svg>
@@ -288,6 +312,10 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   defp py_label(id, sg) do
     project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 14)
+  end
+
+  defp py_count(id, sg) do
+    project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 28)
   end
 
   defp sg_layout(snapshot, id) do
@@ -486,11 +514,26 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             >
               Restart
             </button>
+            <%= if @snapshot.mode == :counter do %>
+              <button
+                class="sg-btn sg-btn--increment"
+                type="button"
+                phx-click="increment"
+                phx-value-node={@fault_node}
+              >
+                Count
+              </button>
+            <% end %>
           </div>
         </.form>
         <p class="sg-faults__note">
           Pick a node, then crash or restart it while the run is active.
         </p>
+        <%= if @snapshot.mode == :counter do %>
+          <p class="sg-faults__note">
+            Use Count to add an increment to the selected node.
+          </p>
+        <% end %>
       </div>
 
       <div class="sg-controls__hint">
@@ -552,6 +595,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
+        <%= if @snapshot.mode == :counter do %>
+          <div>
+            <dt>Value</dt><dd>{@snapshot.best_value}</dd>
+          </div>
+          <div>
+            <dt>Reached</dt><dd>{@snapshot.reached}/{@snapshot.total}</dd>
+          </div>
+        <% end %>
       </dl>
     </section>
     """

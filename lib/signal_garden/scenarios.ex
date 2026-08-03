@@ -20,7 +20,9 @@ defmodule SignalGarden.Scenarios do
       split(),
       churn(),
       lossy(),
-      crash()
+      crash(),
+      counter(),
+      counter_split()
     ]
   end
 
@@ -161,6 +163,63 @@ defmodule SignalGarden.Scenarios do
       delay_ms: {25, 55},
       drop_prob: 0.05,
       gossip_interval_ms: 70
+    }
+  end
+
+  @doc """
+  A ring where every node counts once into a grow-only counter.
+
+  The counter mode merges per-slot maxima. The network converges when
+  every node holds the vector that carries every increment.
+  """
+  def counter do
+    topology = Topology.ring(10)
+
+    %Scenario{
+      id: :counter,
+      name: "Counter ring",
+      description: "Ten nodes merge one increment each. The total is ten.",
+      seed: 5,
+      mode: :counter,
+      topology: topology,
+      origin: 1,
+      latest_value: 10,
+      delay_ms: {20, 50},
+      drop_prob: 0.0,
+      gossip_interval_ms: 80
+    }
+  end
+
+  @doc """
+  A network that splits, counts while apart, then merges the totals.
+
+  Three nodes move to their own group at the start. Two of them count
+  again while isolated. The heal merges both sides and the total reaches
+  fourteen. The counts made during the split are never lost.
+  """
+  def counter_split do
+    topology = Topology.random(12, 3, 21)
+
+    %Scenario{
+      id: :counter_split,
+      name: "Counter split",
+      description: "A split isolates three nodes. They count, then heal.",
+      seed: 21,
+      mode: :counter,
+      topology: topology,
+      origin: 1,
+      latest_value: 14,
+      delay_ms: {25, 55},
+      drop_prob: 0.0,
+      gossip_interval_ms: 75,
+      fault_schedule: [
+        %{at: 0, action: {:assign, 6, 1}, label: "Node 6 joins group B"},
+        %{at: 5, action: {:assign, 7, 1}, label: "Node 7 joins group B"},
+        %{at: 10, action: {:assign, 8, 1}, label: "Node 8 joins group B"},
+        %{at: 800, action: {:increment, 6}, label: "Node 6 counts again"},
+        %{at: 900, action: {:increment, 7}, label: "Node 7 counts again"},
+        %{at: 1800, action: {:merge, :all}, label: "Network heals"}
+      ]
     }
   end
 

@@ -11,6 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
       assert decoded.id == scenario.id
       assert decoded.name == scenario.name
       assert decoded.seed == scenario.seed
+      assert decoded.mode == scenario.mode
       assert decoded.topology.nodes == scenario.topology.nodes
       assert decoded.topology.edges == scenario.topology.edges
       assert decoded.fault_schedule == scenario.fault_schedule
@@ -87,6 +88,29 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert decoded.fault_schedule == scenario.fault_schedule
     assert {:crash, 4} in Enum.map(decoded.fault_schedule, & &1.action)
     assert {:restart, 9} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "counter scenarios round-trip their mode and increment faults" do
+    scenario = Scenarios.counter_split()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.mode == :counter
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:increment, 6} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "a file without a mode field loads as rumor" do
+    json = ScenarioCodec.encode(%{Scenarios.line() | mode: :rumor})
+    json = String.replace(json, ~s("mode": "rumor",), "")
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+    assert decoded.mode == :rumor
+  end
+
+  test "an unknown mode is rejected" do
+    json = ScenarioCodec.encode(%{Scenarios.line() | mode: :rumor})
+    json = String.replace(json, ~s("mode": "rumor",), ~s("mode": "banana",))
+    assert {:error, {:invalid_field, "mode"}} = ScenarioCodec.decode(json)
   end
 
   test "an exported crash scenario replays to the same trace" do

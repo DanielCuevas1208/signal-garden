@@ -83,4 +83,18 @@ defmodule SignalGardenWeb.GardenLiveTest do
     up = Enum.find(snapshot.nodes, &(&1.id == 2))
     assert up.up == true
   end
+
+  test "counter scenarios expose the count control", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "counter"})
+
+    _ = :sys.get_state(SignalGarden.Sim.Engine)
+
+    assert has_element?(view, "button", "Count")
+    assert render(view) =~ "G-Counter"
+    assert SignalGarden.Sim.snapshot().mode == :counter
+  end
 end

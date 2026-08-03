@@ -42,4 +42,14 @@ defmodule SignalGarden.Sim.EngineTest do
 
     assert Engine.snapshot().delay_ms == {120, 120}
   end
+
+  test "the increment command reaches the core in counter mode" do
+    Engine.load_scenario(:counter)
+    Engine.increment(2)
+    _ = :sys.get_state(Engine)
+
+    snap = Engine.snapshot()
+    assert snap.mode == :counter
+    assert snap.best_value == 2
+  end
 end

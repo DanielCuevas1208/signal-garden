@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter counter_split imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -50,6 +50,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "name" => scenario.name,
       "description" => scenario.description,
       "seed" => scenario.seed,
+      "mode" => Atom.to_string(scenario.mode),
       "origin" => scenario.origin,
       "latest_value" => scenario.latest_value,
       "delay_ms" => encode_delay(scenario.delay_ms),
@@ -92,6 +93,10 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     %{"at" => at, "action" => "restart", "node" => node, "label" => label}
   end
 
+  defp encode_fault(%{at: at, action: {:increment, node}, label: label}) do
+    %{"at" => at, "action" => "increment", "node" => node, "label" => label}
+  end
+
   defp encode_topology(%Topology{} = topology) do
     %{
       "id" => Atom.to_string(topology.id),
@@ -113,6 +118,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     with {:ok, topology} <- decode_topology(map["topology"]),
          {:ok, origin} <- require_pos_int(map["origin"], "origin"),
          :ok <- validate_origin(topology, origin),
+         {:ok, mode} <- require_mode(map["mode"]),
          {:ok, name} <- require_string(map["name"], "name"),
          {:ok, description} <- require_string(map["description"], "description"),
          {:ok, seed} <- require_int(map["seed"], "seed"),
@@ -129,6 +135,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          name: name,
          description: description,
          seed: seed,
+         mode: mode,
          topology: topology,
          origin: origin,
          latest_value: latest_value,
@@ -202,6 +209,11 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     {:ok, %{at: at, action: {:restart, node}, label: label}}
   end
 
+  defp decode_fault(%{"at" => at, "action" => "increment", "node" => node, "label" => label})
+       when is_integer(at) and is_integer(node) do
+    {:ok, %{at: at, action: {:increment, node}, label: label}}
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
 
   defp parse_id(nil), do: :imported
@@ -214,6 +226,12 @@ defmodule SignalGarden.Sim.ScenarioCodec do
   rescue
     ArgumentError -> :imported
   end
+
+  # A missing mode means rumor, so files written before counters still load.
+  defp require_mode(nil), do: {:ok, :rumor}
+  defp require_mode("rumor"), do: {:ok, :rumor}
+  defp require_mode("counter"), do: {:ok, :counter}
+  defp require_mode(_), do: {:error, {:invalid_field, "mode"}}
 
   defp parse_key(key) when is_binary(key) do
     case Integer.parse(key) do

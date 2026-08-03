@@ -27,7 +27,9 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.17.3"
-          otp-version: "27"
+          # The version-type strict flag needs a patch label that exists in the
+          # erlef build mirror. A bare major version ("27") is not a build label.
+          otp-version: "27.3.4.15"
           version-type: strict
 
       - name: Restore dependencies cache
