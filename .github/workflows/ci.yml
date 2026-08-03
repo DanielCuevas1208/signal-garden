@@ -59,3 +59,6 @@ jobs:
 
       - name: Run tests
         run: mix test
+
+      - name: Headless replay evidence
+        run: MIX_ENV=test mix garden.replay --verify

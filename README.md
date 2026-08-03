@@ -31,6 +31,7 @@ lib/signal_garden/
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
+    replay.ex         # Headless, deterministic replay. Backs the CLI and sample script.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
@@ -137,33 +138,35 @@ write survives only the current run. Reset rebuilds the scenario from its seed.
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
-was produced with the `Core` module only, with no animation loop and no
+was produced with the `Replay` module only, with no animation loop and no
 browser. Reproduce it with the command below.
 
 ```
-scenario            nodes  status       t(ms)     hops   dropped   steps
-Line                8      converged    772       72     0         142
-Ring                12     converged    750       120    0         236
-Grid                30     converged    1295      564    0         1112
-Random graph        16     converged    715       160    0         312
-Healing partition   14     converged    1397      198    51        446
-Churn               15     converged    731       152    4         309
-Lossy link          14     converged    594       120    6         237
-Crash and recover   12     converged    1815      269    24        540
-Grow-only counter   12     converged    3832      617    44        1281
+scenario           nodes  status     t(ms)  hops  dropped  steps
+Line               8      converged  772    72    0        142
+Ring               12     converged  750    120   0        236
+Grid               30     converged  1295   564   0        1112
+Random graph       16     converged  715    160   0        312
+Healing partition  14     converged  1397   198   51       446
+Churn              15     converged  731    152   4        309
+Lossy link         14     converged  594    120   6        237
+Crash and recover  12     converged  1815   269   24       540
+Grow-only counter  12     converged  3832   617   44       1281
 ```
 
-The determinism check confirms the core is reproducible:
+The determinism check confirms the core is reproducible. Every scenario
+replays to an identical result:
 
 ```
-ring determinism: convergence_time equal = true
-ring determinism: history equal          = true
-ring determinism: event_log equal        = true
-crash determinism: convergence_time equal = true
-crash determinism: event_log equal        = true
-counter determinism: convergence_time equal = true
-counter determinism: counter_total equal  = true
-counter determinism: event_log equal      = true
+Line: deterministic = true (t=772ms, 142 steps, 72 events)
+Ring: deterministic = true (t=750ms, 236 steps, 120 events)
+Grid: deterministic = true (t=1295ms, 1112 steps, 564 events)
+Random graph: deterministic = true (t=715ms, 312 steps, 160 events)
+Healing partition: deterministic = true (t=1397ms, 446 steps, 249 events)
+Churn: deterministic = true (t=731ms, 309 steps, 156 events)
+Lossy link: deterministic = true (t=594ms, 237 steps, 126 events)
+Crash and recover: deterministic = true (t=1815ms, 540 steps, 273 events)
+Grow-only counter: deterministic = true (t=3832ms, 1281 steps, 666 events)
 ```
 
 Reproduce this output from a checkout with:
@@ -171,6 +174,55 @@ Reproduce this output from a checkout with:
 ```
 mix run --no-start priv/sample.exs
 ```
+
+## Headless replay
+
+The `mix garden.replay` task runs the same core from the command line. It
+prints a report without starting the server. The output is deterministic, so
+it is safe to diff and safe to record in a changelog.
+
+Run every catalog scenario:
+
+```
+mix garden.replay
+```
+
+Run one scenario by id:
+
+```
+mix garden.replay ring
+```
+
+Run a scenario file:
+
+```
+mix garden.replay priv/scenarios/counter.json
+```
+
+Print the full event trace:
+
+```
+mix garden.replay lossy --trace
+```
+
+The trace lists every delivery, drop, crash, restart, and counter write in
+chronological order. Two runs produce the same trace.
+
+Confirm determinism:
+
+```
+mix garden.replay --verify
+```
+
+Emit machine-readable JSON for a script or a diff:
+
+```
+mix garden.replay counter --json
+```
+
+The `SignalGarden.Sim.Replay` module backs the task. It runs a scenario to
+completion and returns the summary numbers plus the full trace. Tests drive
+this module directly, so the CLI has the same coverage as the core.
 
 ## Status model
 
@@ -215,11 +267,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 87 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, and the
+headless replay tool. It also covers the engine GenServer and the LiveView.
+Tests never sleep and never read the wall clock. Each core test replays a
+scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -246,7 +298,7 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. `mix garden.replay` prints a table, a trace, or JSON from the CLI.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
