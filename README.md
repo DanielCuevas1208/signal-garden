@@ -15,8 +15,9 @@ the same fault on another machine.
 - Logical time that has no link to the wall clock.
 - Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
-- Two gossip payloads: a rumor and a grow-only counter.
+- Three gossip payloads: a rumor, a grow-only counter, and a grow-only set.
 - A grow-only counter (G-Counter) that converges across the network.
+- A grow-only set (G-Set) that spreads a collection across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 - A headless replay tool that reproduces any run from the CLI.
@@ -84,10 +85,11 @@ heal that link. Drag the sliders to change delay, loss rate, and speed. Pick a
 scenario from the list to load a new run.
 
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
-the box to write to a node. Use **Export JSON** to download the active
-scenario. Use **Import JSON** to paste a file and load it into the control
-room. Sample files ship at `priv/scenarios/ring.json` and
-`priv/scenarios/counter.json`.
+the box to write to a node. In set mode, use the box to add a member. Use
+**Export JSON** to download the active scenario. Use **Import JSON** to paste a
+file and load it into the control room. Sample files ship at
+`priv/scenarios/ring.json`, `priv/scenarios/counter.json`, and
+`priv/scenarios/set.json`.
 
 ## Scenario files
 
@@ -107,8 +109,8 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with ten runs. Each one fixes a topology, a seed,
-and a set of network conditions.
+The scenario catalog ships with eleven runs. Each one fixes a topology, a
+seed, and a set of network conditions.
 
 | Scenario | Nodes | Faults |
 | --- | --- | --- |
@@ -122,6 +124,7 @@ and a set of network conditions.
 | Crash and recover | 12 | two nodes crash, then restart |
 | Broken link | 12 | two links are cut, then healed |
 | Grow-only counter | 12 | five writes climb a G-Counter on a schedule |
+| Guest list | 12 | five names join a G-Set on a schedule |
 
 ## Link cuts
 
@@ -162,6 +165,26 @@ Convergence needs every scheduled write to be issued. The run re-arms when you
 write after it converged, so you can watch the new total spread. A manual
 write survives only the current run. Reset rebuilds the scenario from its seed.
 
+## Sets and CRDTs
+
+The **Guest list** scenario swaps the rumor for a G-Set CRDT. This is the
+classic grow-only set from the CRDT family. It shows how a collection
+converges while the network keeps losing and reordering messages.
+
+Each node holds a set of elements. An add action puts one element into the set
+of the writing node. A gossip message carries the sender's whole set. On
+delivery, the receiver merges the sets with union. Every node converges to the
+same collection, even when the network splits or drops messages.
+
+The control room shows the set contents as chips in the Telemetry card. It
+shows the element count above each node. The **Add** box in the Node fault
+panel writes a member to the selected node. The convergence chart tracks how
+many nodes hold the full set.
+
+Convergence needs every scheduled add to be issued. The run re-arms when you
+add after it converged, so you can watch the new member spread. A manual add
+survives only the current run. A duplicate add leaves the set unchanged.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
@@ -180,6 +203,7 @@ Lossy link          14     converged    594       120    6         237
 Crash and recover   12     converged    1815      269    24        540
 Broken link         12     converged    2822      382    45        809
 Grow-only counter   12     converged    3832      617    44        1281
+Guest list          12     converged    3638      603    21        1228
 ```
 
 The determinism check confirms the core is reproducible:
@@ -195,6 +219,9 @@ cut determinism: event_log equal         = true
 counter determinism: convergence_time equal = true
 counter determinism: counter_total equal  = true
 counter determinism: event_log equal      = true
+guest determinism: convergence_time equal = true
+guest determinism: elements equal        = true
+guest determinism: event_log equal        = true
 ```
 
 Reproduce this output from a checkout with:
@@ -277,11 +304,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 104 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers link cuts, the engine GenServer, the LiveView, and the headless replay
-tool. Tests never sleep and never read the wall clock. Each core test replays
-a scenario and asserts on the resulting state.
+The suite has 125 tests. It covers the deterministic core, the counter CRDT,
+the set CRDT, the topology builder, the scenario codec, and the scenario
+catalog. It also covers link cuts, the engine GenServer, the LiveView, and the
+headless replay tool. Tests never sleep and never read the wall clock. Each
+core test replays a scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -297,6 +324,7 @@ mix precommit
 - Crashes lose all node state. There is no disk or persistent memory model.
 - The engine runs one scenario at a time inside a single GenServer.
 - The counter payload is a G-Counter. It only grows; it cannot be decremented.
+- The set payload is a G-Set. Elements join; they cannot leave.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
@@ -309,9 +337,10 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
+- **Sets and CRDTs.** Done. A G-Set spreads a collection through the network with scheduled and manual adds.
 - **Headless replay tool.** Done. The `mix signal_garden.replay` task prints summaries, traces, and determinism checks from the CLI.
 - **Edge-level partitions.** Done. Cut and heal single links from the graph, the fault box, or a scenario file.
-- **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
+- **More CRDTs.** Add an LWW register or a last-writer-wins map on top of the set model.
 
 ## License
 

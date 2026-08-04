@@ -776,6 +776,26 @@ body {
   color: var(--sg-text);
 }
 
+.sg-faults__input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--sg-edge);
+  color: var(--sg-text);
+  padding: 8px 10px;
+  border-radius: 11px;
+  font-size: 13px;
+}
+
+.sg-faults__input::placeholder {
+  color: var(--sg-text-faint);
+}
+
+.sg-faults__input:focus {
+  outline: none;
+  border-color: rgba(196, 181, 253, 0.6);
+}
+
 .sg-btn--fault {
   border-color: rgba(251, 113, 133, 0.4);
   color: #fda4af;
@@ -852,6 +872,31 @@ body {
   color: var(--sg-text);
   margin: 4px 0 0;
   font-variant-numeric: tabular-nums;
+}
+
+.sg-set {
+  margin-top: 14px;
+  border-top: 1px solid var(--sg-line);
+  padding-top: 12px;
+}
+
+.sg-set__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sg-set__chip {
+  background: rgba(232, 121, 249, 0.08);
+  border: 1px solid rgba(232, 121, 249, 0.35);
+  color: #f0abfc;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* event log ------------------------------------------------------------- */

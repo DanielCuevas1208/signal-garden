@@ -10,10 +10,15 @@ defmodule SignalGarden.Sim.Scenario do
 
     * `:rumor` - a single value with a version, seeded by the origin node
     * `:counter` - a grow-only counter, grown by increment fault actions
+    * `:set` - a grow-only set, grown by add fault actions
 
   Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
   per node id and merges peer state with element-wise max. The counter total
   is the sum of the cells, and every node converges to the same total.
+
+  Set mode swaps the rumor for a G-Set CRDT. Each node keeps a set of elements
+  and merges peer state with set union. Every node converges to the same
+  collection, so a membership list or a tag cloud spreads through the network.
   """
 
   defstruct id: :line,
@@ -31,7 +36,7 @@ defmodule SignalGarden.Sim.Scenario do
             fault_schedule: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter
+  @type mode :: :rumor | :counter | :set
 
   @type partition_change ::
           {:merge, :all}
@@ -42,6 +47,7 @@ defmodule SignalGarden.Sim.Scenario do
           | {:crash, pos_integer()}
           | {:restart, pos_integer()}
           | {:increment, pos_integer(), pos_integer()}
+          | {:add, pos_integer(), binary() | number()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 

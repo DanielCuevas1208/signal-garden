@@ -35,6 +35,7 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
       |> assign(:speed, 6)
       |> assign(:fault_node, snapshot.origin)
+      |> assign(:fault_element, "")
       |> assign(:link_edges, edge_options(snapshot))
       |> assign(:link_edge, first_edge_value(snapshot))
       |> assign(:show_import, false)
@@ -143,6 +144,17 @@ defmodule SignalGardenWeb.GardenLive do
     {:noreply, socket}
   end
 
+  def handle_event("add_element", %{"element" => element}, socket) do
+    case normalize_element(element) do
+      nil ->
+        {:noreply, socket}
+
+      value ->
+        Sim.add(socket.assigns.fault_node, value)
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
   def handle_event("select_fault_node", %{"node" => node_id}, socket) do
     {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
   end
@@ -206,9 +218,27 @@ defmodule SignalGardenWeb.GardenLive do
     |> assign(:selected_scenario, snapshot.scenario.id)
     |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
     |> assign(:drop_value, round(snapshot.drop_prob * 100))
+    |> assign(:fault_node, keep_node(socket.assigns.fault_node, snapshot))
     |> assign(:link_edges, edge_options(snapshot))
     |> assign(:link_edge, keep_edge(socket.assigns.link_edge, snapshot))
   end
+
+  defp keep_node(value, snapshot) do
+    if Enum.any?(snapshot.nodes, &(&1.id == value)) do
+      value
+    else
+      snapshot.origin
+    end
+  end
+
+  defp normalize_element(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      element -> element
+    end
+  end
+
+  defp normalize_element(_), do: nil
 
   defp delay_to_form({_lo, hi}), do: hi
   defp delay_to_form(value) when is_integer(value), do: value

@@ -80,6 +80,9 @@ defmodule SignalGarden.Sim do
   @doc "Add `amount` to a node's counter cell in counter mode."
   def increment(node, amount \\ 1), do: Engine.increment(node, amount)
 
+  @doc "Add an element to a node's set in set mode."
+  def add(node, element), do: Engine.add(node, element)
+
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
 end

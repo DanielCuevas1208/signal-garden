@@ -30,6 +30,20 @@ defmodule SignalGarden.ScenariosTest do
     assert state.dropped > 0
   end
 
+  test "the Guest list scenario converges to the full set" do
+    scenario = Scenarios.fetch(:guest_list)
+    state = await_converge(Core.new(scenario), 200_000)
+
+    assert state.status == :converged
+    assert state.adds_issued == 5
+    assert MapSet.size(state.elements) == 5
+
+    for node_id <- scenario.topology.nodes do
+      elements = get_in(state.nodes, [node_id, :known, state.origin]).elements
+      assert MapSet.equal?(elements, state.elements), "node #{node_id} misses elements"
+    end
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

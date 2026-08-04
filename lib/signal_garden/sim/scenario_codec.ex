@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -118,6 +118,16 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "action" => "increment",
       "node" => node,
       "amount" => amount,
+      "label" => label
+    }
+  end
+
+  defp encode_fault(%{at: at, action: {:add, node, element}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "add",
+      "node" => node,
+      "element" => element,
       "label" => label
     }
   end
@@ -292,9 +302,19 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     end
   end
 
+  defp decode_fault(%{"at" => at, "action" => "add", "node" => node, "element" => element} = map)
+       when is_integer(at) and is_integer(node) and (is_binary(element) or is_number(element)) do
+    if String.trim(element) != "" do
+      {:ok, %{at: at, action: {:add, node, element}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
 
   defp decode_mode(%{"mode" => "counter"}), do: {:ok, :counter}
+  defp decode_mode(%{"mode" => "set"}), do: {:ok, :set}
   defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
   defp decode_mode(_), do: {:ok, :rumor}
 

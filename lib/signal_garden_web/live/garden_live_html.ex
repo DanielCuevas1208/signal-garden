@@ -146,6 +146,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
+      :added -> "text-fuchsia-300"
       _ -> "text-slate-300"
     end
   end
@@ -157,6 +158,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
+  def log_label(:added), do: "added"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -183,12 +185,16 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
-          <%= if @snapshot.mode == :counter do %>
-            {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
-          <% else %>
-            {@snapshot.reached}/{@snapshot.total} nodes know the latest value
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :set -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full set
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% _ -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes know the latest value
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
           <% end %>
         </p>
       </div>
@@ -311,7 +317,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
-                  <%= if sg.mode == :counter do %>
+                  <%= if sg.mode in [:counter, :set] do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
@@ -390,6 +396,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
   attr :link_edges, :list, required: true
   attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
@@ -406,6 +413,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         drop_value={@drop_value}
         speed={@speed}
         fault_node={@fault_node}
+        fault_element={@fault_element}
         link_edges={@link_edges}
         link_edge={@link_edge}
         show_import={@show_import}
@@ -424,6 +432,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
   attr :link_edges, :list, required: true
   attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
@@ -562,11 +571,32 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <% end %>
           </div>
         </.form>
+
+        <%= if @snapshot.mode == :set do %>
+          <.form for={nil} id="sg-form-add" phx-submit="add_element" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-add-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to the set"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Add</button>
+            </div>
+          </.form>
+        <% end %>
+
         <p class="sg-faults__note">
-          <%= if @snapshot.mode == :counter do %>
-            Pick a node, then write to its counter cell or crash and restart it.
-          <% else %>
-            Pick a node, then crash or restart it while the run is active.
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              Pick a node, then write to its counter cell or crash and restart it.
+            <% :set -> %>
+              Pick a node, then add a member to its set or crash and restart it.
+            <% _ -> %>
+              Pick a node, then crash or restart it while the run is active.
           <% end %>
         </p>
       </div>
@@ -669,10 +699,29 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Counter total</dt><dd>{@snapshot.counter_total}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :set do %>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.set_adds}</dd>
+          </div>
+          <div>
+            <dt>Elements</dt><dd>{@snapshot.set_size}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
       </dl>
+
+      <%= if @snapshot.mode == :set and @snapshot.set_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Set contents</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.set_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
     </section>
     """
   end
@@ -695,6 +744,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   <%= cond do %>
                     <% entry.kind == :increment -> %>
                       node {entry.from} wrote +{entry.amount}
+                    <% entry.kind == :added -> %>
+                      node {entry.from} added "{entry.element}"
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

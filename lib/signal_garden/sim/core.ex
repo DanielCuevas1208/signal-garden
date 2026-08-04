@@ -61,14 +61,21 @@ defmodule SignalGarden.Sim.Core do
   with element-wise max, so every node converges to the same total. A node is
   informed when its own total equals the total of all increments issued so far.
   Convergence requires that every scheduled increment has been issued.
+
+  The `:set` mode gossips a grow-only set. Each node holds a set of elements.
+  An add action puts one element into the set of the writing node, and a
+  message carries the sender's whole set. On delivery the receiver merges with
+  set union, so every node converges to the same collection. A node is
+  informed when its set contains every element added so far. Convergence
+  requires that every scheduled add has been issued.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
-  @type mode :: :rumor | :counter
+  @type mode :: :rumor | :counter | :set
 
   @type event ::
           {:gossip, pos_integer()}
-          | {:deliver, pos_integer(), %{version: non_neg_integer(), value: number()}}
+          | {:deliver, pos_integer(), map()}
           | {:fault, term()}
 
   @type state :: %__MODULE__{}
@@ -96,6 +103,10 @@ defmodule SignalGarden.Sim.Core do
     increments_issued: 0,
     increments_total: 0,
     increment_target: 0,
+    adds_issued: 0,
+    adds_total: 0,
+    adds_target: 0,
+    elements: MapSet.new(),
     rng: nil,
     informed: MapSet.new(),
     history: [],
@@ -131,6 +142,10 @@ defmodule SignalGarden.Sim.Core do
       increments_issued: 0,
       increments_total: 0,
       increment_target: scheduled_increments(scenario),
+      adds_issued: 0,
+      adds_total: 0,
+      adds_target: scheduled_adds(scenario),
+      elements: MapSet.new(),
       delay_ms: scenario.delay_ms,
       drop_prob: scenario.drop_prob,
       gossip_interval_ms: scenario.gossip_interval_ms,
@@ -146,7 +161,8 @@ defmodule SignalGarden.Sim.Core do
     |> record_history()
   end
 
-  defp latest_for(%SignalGarden.Sim.Scenario{mode: :counter}), do: %{value: 0, version: 0}
+  defp latest_for(%SignalGarden.Sim.Scenario{mode: mode}) when mode in [:counter, :set],
+    do: %{value: 0, version: 0}
 
   defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
     do: %{value: value, version: 1}
@@ -159,7 +175,16 @@ defmodule SignalGarden.Sim.Core do
 
   defp scheduled_increments(_scenario), do: 0
 
-  defp initial_informed(%SignalGarden.Sim.Scenario{mode: :counter}), do: MapSet.new()
+  defp scheduled_adds(%SignalGarden.Sim.Scenario{mode: :set} = scenario) do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:add, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_adds(_scenario), do: 0
+
+  defp initial_informed(%SignalGarden.Sim.Scenario{mode: mode}) when mode in [:counter, :set],
+    do: MapSet.new()
 
   defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
     do: MapSet.new([origin])
@@ -172,6 +197,9 @@ defmodule SignalGarden.Sim.Core do
         case scenario.mode do
           :counter ->
             %{origin => %{cells: %{}}}
+
+          :set ->
+            %{origin => %{elements: MapSet.new()}}
 
           _ ->
             if id == origin do
@@ -281,6 +309,11 @@ defmodule SignalGarden.Sim.Core do
     apply_increment(state, node, amount, true)
   end
 
+  def command(%__MODULE__{mode: :set} = state, {:add, node, element})
+      when is_integer(node) and (is_binary(element) or is_number(element)) do
+    apply_add(state, node, element, true)
+  end
+
   def command(%__MODULE__{} = state, {:toggle_partition, node}) do
     current = Map.get(state.partitions, node, 0)
     next = if current == 0, do: 1, else: 0
@@ -332,6 +365,9 @@ defmodule SignalGarden.Sim.Core do
   defp empty_known(%__MODULE__{mode: :counter, origin: origin}),
     do: %{origin => %{cells: %{}}}
 
+  defp empty_known(%__MODULE__{mode: :set, origin: origin}),
+    do: %{origin => %{elements: MapSet.new()}}
+
   defp empty_known(%__MODULE__{origin: origin}),
     do: %{origin => %{version: 0, value: nil}}
 
@@ -356,6 +392,21 @@ defmodule SignalGarden.Sim.Core do
       from: node,
       to: nil,
       amount: amount,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_add(%__MODULE__{} = state, node, element) do
+    entry = %{
+      t: state.clock,
+      kind: :added,
+      from: node,
+      to: nil,
+      element: element,
       partition: false
     }
 
@@ -417,12 +468,17 @@ defmodule SignalGarden.Sim.Core do
   defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
     case state.mode do
       :counter -> deliver_counter(state, to, payload)
+      :set -> deliver_set(state, to, payload)
       _ -> deliver_rumor(state, to, payload)
     end
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, {:increment, node, amount}}) do
     apply_increment(state, node, amount, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:add, node, element}}) do
+    apply_add(state, node, element, false)
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, action}) do
@@ -471,6 +527,21 @@ defmodule SignalGarden.Sim.Core do
       cells = merge_counter(current.cells, payload.cells)
 
       nodes = put_in(state.nodes, [to, :known, state.origin], %{cells: cells})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_set(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      elements = MapSet.union(current.elements, payload.elements)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{elements: elements})
       state = %{state | nodes: nodes, delivered: state.delivered + 1}
       refresh_node_informed(state, to)
     end
@@ -547,7 +618,7 @@ defmodule SignalGarden.Sim.Core do
       state.convergence_time != nil ->
         state
 
-      reached >= total and total > 0 and counter_done?(state) ->
+      reached >= total and total > 0 and fault_target_met?(state) ->
         %{state | status: :converged, convergence_time: state.clock}
 
       true ->
@@ -612,14 +683,60 @@ defmodule SignalGarden.Sim.Core do
       counter_total(node, state.origin) == state.increments_total
   end
 
-  defp counter_done?(%__MODULE__{mode: :counter} = state) do
+  # ---------------------------------------------------------------------------
+  # set mode (grow-only set)
+  # ---------------------------------------------------------------------------
+
+  defp apply_add(%__MODULE__{mode: :set} = state, node, element, bump_target?) do
+    issued = state.adds_issued + 1
+    elements = MapSet.put(state.elements, element)
+    target = if bump_target?, do: state.adds_target + 1, else: state.adds_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | adds_issued: issued,
+        adds_total: MapSet.size(elements),
+        adds_target: target,
+        elements: elements,
+        latest: %{value: MapSet.size(elements), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{elements: elements})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_add(node, element)
+  end
+
+  defp set_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+
+    node.up and
+      state.adds_issued >= state.adds_target and
+      MapSet.size(node.known[state.origin].elements) == MapSet.size(state.elements)
+  end
+
+  # ---------------------------------------------------------------------------
+  # convergence targets
+  # ---------------------------------------------------------------------------
+
+  defp fault_target_met?(%__MODULE__{mode: :counter} = state) do
     state.increments_issued >= state.increment_target
   end
 
-  defp counter_done?(_state), do: true
+  defp fault_target_met?(%__MODULE__{mode: :set} = state) do
+    state.adds_issued >= state.adds_target
+  end
+
+  defp fault_target_met?(_state), do: true
 
   defp refresh_node_informed(%__MODULE__{} = state, node_id) do
-    informed? = counter_informed?(state, node_id)
+    informed? = node_informed?(state, node_id)
 
     nodes = put_in(state.nodes, [node_id, :informed], informed?)
 
@@ -630,6 +747,14 @@ defmodule SignalGarden.Sim.Core do
 
     %{state | nodes: nodes, informed: informed}
   end
+
+  defp node_informed?(%__MODULE__{mode: :counter} = state, node_id),
+    do: counter_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :set} = state, node_id),
+    do: set_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{nodes: nodes}, node_id), do: nodes[node_id].informed
 
   defp refresh_all_informed(%__MODULE__{} = state) do
     Enum.reduce(state.topology.nodes, state, fn node_id, acc ->
@@ -768,6 +893,9 @@ defmodule SignalGarden.Sim.Core do
       mode: state.mode,
       counter_total: state.increments_total,
       counter_writes: state.increments_issued,
+      set_size: MapSet.size(state.elements),
+      set_adds: state.adds_issued,
+      set_elements: Enum.sort(MapSet.to_list(state.elements)),
       delay_ms: state.delay_ms,
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
@@ -805,11 +933,16 @@ defmodule SignalGarden.Sim.Core do
     Enum.sum(Map.values(node.known[origin].cells))
   end
 
+  defp node_value(%__MODULE__{mode: :set, origin: origin}, node) do
+    MapSet.size(node.known[origin].elements)
+  end
+
   defp node_value(%__MODULE__{origin: origin}, node) do
     get_in(node, [Access.key(:known), origin, Access.key(:value)])
   end
 
   defp node_version(%__MODULE__{mode: :counter} = state, _node), do: state.increments_issued
+  defp node_version(%__MODULE__{mode: :set} = state, _node), do: state.adds_issued
 
   defp node_version(%__MODULE__{origin: origin}, node) do
     get_in(node, [Access.key(:known), origin, Access.key(:version)])

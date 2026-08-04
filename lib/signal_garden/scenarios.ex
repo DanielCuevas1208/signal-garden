@@ -22,7 +22,8 @@ defmodule SignalGarden.Scenarios do
       lossy(),
       crash(),
       cut(),
-      counter()
+      counter(),
+      guest_list()
     ]
   end
 
@@ -255,6 +256,38 @@ defmodule SignalGarden.Scenarios do
         %{at: 1500, action: {:increment, 9, 1}, label: "Node 9 writes +1"},
         %{at: 2200, action: {:increment, 4, 3}, label: "Node 4 writes +3"},
         %{at: 2800, action: {:increment, 1, 2}, label: "Node 1 writes +2"}
+      ]
+    }
+  end
+
+  @doc """
+  A random graph that replicates a grow-only set.
+
+  Five member names join the set on a schedule. Each node keeps a set of
+  elements and merges with union, so the guest list converges even while the
+  network keeps losing and reordering messages.
+  """
+  def guest_list do
+    topology = Topology.random(12, 3, 33)
+
+    %Scenario{
+      id: :guest_list,
+      name: "Guest list",
+      description: "Twelve nodes replicate a G-Set. Names join on a schedule.",
+      seed: 33,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {25, 55},
+      drop_prob: 0.05,
+      gossip_interval_ms: 70,
+      mode: :set,
+      fault_schedule: [
+        %{at: 400, action: {:add, 1, "Ada"}, label: "Node 1 adds Ada"},
+        %{at: 900, action: {:add, 6, "Grace"}, label: "Node 6 adds Grace"},
+        %{at: 1500, action: {:add, 9, "Alan"}, label: "Node 9 adds Alan"},
+        %{at: 2200, action: {:add, 4, "Edsger"}, label: "Node 4 adds Edsger"},
+        %{at: 2800, action: {:add, 1, "Barbara"}, label: "Node 1 adds Barbara"}
       ]
     }
   end

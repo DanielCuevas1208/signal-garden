@@ -101,6 +101,28 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert state.increments_total == 9
   end
 
+  test "the sample set file loads and converges to the full collection" do
+    path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "set.json"])
+    json = File.read!(path)
+    assert {:ok, scenario} = ScenarioCodec.decode(json)
+    assert scenario.name == "Guest list"
+    assert scenario.mode == :set
+
+    state =
+      scenario
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+
+    assert state.status == :converged
+    assert MapSet.size(state.elements) == 5
+  end
+
   test "crash and restart faults round-trip through JSON" do
     scenario = Scenarios.crash()
     json = ScenarioCodec.encode(scenario)
@@ -139,6 +161,37 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert decoded.mode == :counter
     assert decoded.fault_schedule == scenario.fault_schedule
     assert {:increment, 1, 2} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "set mode and add faults round-trip through JSON" do
+    scenario = Scenarios.guest_list()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.mode == :set
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:add, 1, "Ada"} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "an exported set scenario replays to the same trace" do
+    scenario = Scenarios.guest_list()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+    assert run.(scenario).elements == run.(decoded).elements
   end
 
   test "link cuts round-trip through JSON" do

@@ -34,6 +34,14 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert counter.counter_total == 9
       assert counter.dropped > 0
     end
+
+    test "the set scenario reports set mode and element count" do
+      guest = Enum.find(Replay.summaries(), &(&1.id == :guest_list))
+
+      assert guest.mode == :set
+      assert guest.set_size == 5
+      assert guest.dropped > 0
+    end
   end
 
   describe "run/1" do

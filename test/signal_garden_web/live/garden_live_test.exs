@@ -99,6 +99,47 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.counter_total == 1
   end
 
+  test "set mode shows the add control and adds an element", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "guest_list"})
+
+    assert has_element?(view, "#sg-add-element")
+    assert render(view) =~ "nodes hold the full set"
+    assert render(view) =~ "Elements"
+    refute render(view) =~ "Set contents"
+
+    view
+    |> form("#sg-form-add", %{element: "Linus"})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.set_adds == 1 end)
+    assert snapshot.mode == :set
+    assert snapshot.set_adds == 1
+    assert snapshot.set_size == 1
+    assert snapshot.set_elements == ["Linus"]
+    assert render(view) =~ "Set contents"
+    assert render(view) =~ "Linus"
+  end
+
+  test "an empty add is ignored and keeps the run idle", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "guest_list"})
+
+    view
+    |> form("#sg-form-add", %{element: "   "})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.set_adds == 0 end)
+    assert snapshot.set_adds == 0
+    assert snapshot.set_size == 0
+  end
+
   test "link cut controls are present", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
