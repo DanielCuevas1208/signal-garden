@@ -19,6 +19,7 @@ the same fault on another machine.
 - A grow-only counter (G-Counter) that converges across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
+- A headless replay tool that prints a deterministic trace from the CLI.
 
 ## Architecture
 
@@ -29,6 +30,7 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    replay.ex         # Headless runner that captures a full event trace.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
@@ -134,11 +136,82 @@ Convergence needs every scheduled write to be issued. The run re-arms when you
 write after it converged, so you can watch the new total spread. A manual
 write survives only the current run. Reset rebuilds the scenario from its seed.
 
+## Headless replay tool
+
+The replay tool runs scenarios from the terminal. It drives the pure core
+with no browser. It prints the outcome and the event trace.
+
+Replay every built-in scenario:
+
+```
+mix sim.replay
+```
+
+Replay one scenario by id or by file path:
+
+```
+mix sim.replay ring
+mix sim.replay priv/scenarios/counter.json
+```
+
+Print the full event trace, or emit JSON for a script:
+
+```
+mix sim.replay crash --trace
+mix sim.replay ring --json
+```
+
+Verify that a scenario replays to the same state:
+
+```
+mix sim.replay crash --check
+```
+
+The block below is real output. It comes from the crash scenario.
+
+```
+Scenario: Crash and recover
+Mode: rumor | Topology: random 12/3
+Nodes: 12 | Seed: 11 | Origin: node 1
+
+Result:             converged
+Convergence time:   1.81 s
+Events processed:   540
+Hops:               269
+Delivered:          240
+Dropped:            24
+
+Trace (274 events; last 16 shown, pass --trace for all):
+  t=1723     node 1 -> node 2 delivered
+  t=1733     node 4 -> node 5 delivered
+  t=1767     node 2 -> node 1 delivered
+  t=1772     node 9 -> node 10 delivered
+  t=1779     node 12 -> node 11 delivered
+  t=1797     node 6 -> node 5 delivered
+  t=1811     node 4 -> node 9 delivered
+  t=1815     converged
+```
+
+The trace also records the faults that fired. The lines below come from the
+same run.
+
+```
+  t=500      node 4 crashed (Node 4 crashes)
+  t=700      node 9 crashed (Node 9 crashes)
+  t=1500     node 4 restarted (Node 4 restarts)
+  t=1700     node 9 restarted (Node 9 restarts)
+```
+
+Replays are deterministic. Two replays of the same scenario produce the same
+trace, the same history, and the same convergence time. The `--check` flag
+runs a scenario twice and reports whether the runs agree.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
 was produced with the `Core` module only, with no animation loop and no
-browser. Reproduce it with the command below.
+browser. The `mix sim.replay` command prints the same table. Reproduce it
+with the command below.
 
 ```
 scenario            nodes  status       t(ms)     hops   dropped   steps
@@ -215,11 +288,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 93 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, and the
+headless replay tool. It also covers the engine GenServer and the LiveView.
+Tests never sleep and never read the wall clock. Each core test replays a
+scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -246,7 +319,7 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. `mix sim.replay` replays scenarios from the CLI and prints a deterministic trace.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
