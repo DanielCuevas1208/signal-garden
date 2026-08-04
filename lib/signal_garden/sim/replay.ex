@@ -34,6 +34,9 @@ defmodule SignalGarden.Sim.Replay do
           orset_removes: non_neg_integer(),
           orset_elements: [binary() | number()],
           register_value: binary() | number() | nil,
+          mv_writes: non_neg_integer(),
+          mv_conflicts: non_neg_integer(),
+          mv_values: [binary() | number()],
           map_writes: non_neg_integer(),
           map_size: non_neg_integer(),
           map_fields: [map()]
@@ -49,7 +52,11 @@ defmodule SignalGarden.Sim.Replay do
           dropped: boolean(),
           steps: boolean(),
           history: boolean(),
-          event_log: boolean()
+          event_log: boolean(),
+          mv_entries: boolean(),
+          mv_context: boolean(),
+          mv_values: boolean(),
+          map_fields: boolean()
         }
 
   @doc """
@@ -93,6 +100,13 @@ defmodule SignalGarden.Sim.Replay do
       orset_removes: core.orset_removes_issued,
       orset_elements: Enum.sort(MapSet.to_list(core.orset_elements)),
       register_value: core.register_value,
+      mv_writes: core.writes_issued,
+      mv_conflicts: map_size(core.mv_entries),
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: core.mv_entries,
+          context: core.mv_context
+        }),
       map_writes: core.writes_issued,
       map_size: map_size(core.map_fields),
       map_fields: summarize_map_fields(core.map_fields)
@@ -142,6 +156,17 @@ defmodule SignalGarden.Sim.Replay do
       history: a.history == b.history,
       event_log: a.event_log == b.event_log,
       orset_elements: a.orset_elements == b.orset_elements,
+      mv_entries: a.mv_entries == b.mv_entries,
+      mv_context: a.mv_context == b.mv_context,
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: a.mv_entries,
+          context: a.mv_context
+        }) ==
+          SignalGarden.Sim.MultiValueRegister.values(%{
+            entries: b.mv_entries,
+            context: b.mv_context
+          }),
       map_fields: a.map_fields == b.map_fields
     }
   end

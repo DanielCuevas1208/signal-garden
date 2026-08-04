@@ -26,7 +26,8 @@ defmodule SignalGarden.Scenarios do
       guest_list(),
       roster(),
       bulletin(),
-      service_board()
+      service_board(),
+      conflict_board()
     ]
   end
 
@@ -407,6 +408,34 @@ defmodule SignalGarden.Scenarios do
       mode: :map,
       map_keys: map_keys_from_schedule(fault_schedule),
       fault_schedule: fault_schedule
+    }
+  end
+
+  @doc """
+  A random graph that replicates a multi-value register.
+
+  Two writes happen before either writer can learn the other value.
+  The register keeps both values after the network converges.
+  """
+  def conflict_board do
+    topology = Topology.random(12, 3, 77)
+
+    %Scenario{
+      id: :conflict_board,
+      name: "Conflict board",
+      description: "Twelve nodes replicate an MV-register. Concurrent notices stay visible.",
+      seed: 77,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {35, 65},
+      drop_prob: 0.05,
+      gossip_interval_ms: 80,
+      mode: :mv_register,
+      fault_schedule: [
+        %{at: 400, action: {:write, 2, "blue"}, label: "Node 2 writes blue"},
+        %{at: 400, action: {:write, 9, "green"}, label: "Node 9 writes green"}
+      ]
     }
   end
 

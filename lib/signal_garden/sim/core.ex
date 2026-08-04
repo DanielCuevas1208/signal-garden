@@ -49,7 +49,7 @@ defmodule SignalGarden.Sim.Core do
 
   ## Modes
 
-  A scenario selects one of six payload modes.
+  A scenario selects one of seven payload modes.
 
   The `:rumor` mode (the default) gossips one value with a version. The origin
   node seeds the value, and a node becomes informed when it holds that exact
@@ -92,10 +92,14 @@ defmodule SignalGarden.Sim.Core do
   node converges to the same map, even when the network splits or drops
   messages. A node is informed when it holds the latest write of every key.
   Convergence requires that every scheduled write has been issued.
+
+  The `:mv_register` mode gossips a multi-value register. Each write carries
+  the dots it has observed. Concurrent writes remain visible as separate
+  values. A later write removes the values its writer has seen.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
-  @type mode :: :rumor | :counter | :set | :register | :map | :orset
+  @type mode :: :rumor | :counter | :set | :register | :map | :orset | :mv_register
 
   @type event ::
           {:gossip, pos_integer()}
@@ -142,6 +146,9 @@ defmodule SignalGarden.Sim.Core do
     writes_issued: 0,
     writes_target: 0,
     register_value: nil,
+    mv_entries: %{},
+    mv_context: MapSet.new(),
+    mv_tag_counters: %{},
     map_fields: %{},
     map_keys: [],
     rng: nil,
@@ -211,7 +218,7 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp latest_for(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register, :map, :orset],
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
        do: %{value: 0, version: 0}
 
   defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
@@ -242,7 +249,7 @@ defmodule SignalGarden.Sim.Core do
   defp scheduled_orset_ops(_scenario), do: 0
 
   defp scheduled_writes(%SignalGarden.Sim.Scenario{mode: mode} = scenario)
-       when mode in [:register, :map] do
+       when mode in [:register, :map, :mv_register] do
     Enum.count(scenario.fault_schedule, fn fault ->
       match?({:write, _, _}, fault.action) or match?({:put, _, _, _}, fault.action)
     end)
@@ -251,7 +258,7 @@ defmodule SignalGarden.Sim.Core do
   defp scheduled_writes(_scenario), do: 0
 
   defp initial_informed(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register, :map, :orset],
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
        do: MapSet.new()
 
   defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
@@ -274,6 +281,9 @@ defmodule SignalGarden.Sim.Core do
 
           :register ->
             %{origin => %{value: nil, version: 0}}
+
+          :mv_register ->
+            %{origin => %{entries: %{}, context: MapSet.new()}}
 
           :map ->
             %{origin => %{fields: %{}}}
@@ -401,8 +411,9 @@ defmodule SignalGarden.Sim.Core do
     apply_orset_remove(state, node, element, true)
   end
 
-  def command(%__MODULE__{mode: :register} = state, {:write, node, value})
-      when is_integer(node) and (is_binary(value) or is_number(value)) do
+  def command(%__MODULE__{mode: mode} = state, {:write, node, value})
+      when mode in [:register, :mv_register] and
+             is_integer(node) and (is_binary(value) or is_number(value)) do
     apply_write(state, node, value, true)
   end
 
@@ -470,6 +481,9 @@ defmodule SignalGarden.Sim.Core do
 
   defp empty_known(%__MODULE__{mode: :register, origin: origin}),
     do: %{origin => %{value: nil, version: 0}}
+
+  defp empty_known(%__MODULE__{mode: :mv_register, origin: origin}),
+    do: %{origin => %{entries: %{}, context: MapSet.new()}}
 
   defp empty_known(%__MODULE__{mode: :map, origin: origin}),
     do: %{origin => %{fields: %{}}}
@@ -623,6 +637,7 @@ defmodule SignalGarden.Sim.Core do
       :set -> deliver_set(state, to, payload)
       :orset -> deliver_orset(state, to, payload)
       :register -> deliver_register(state, to, payload)
+      :mv_register -> deliver_mv_register(state, to, payload)
       :map -> deliver_map(state, to, payload)
       _ -> deliver_rumor(state, to, payload)
     end
@@ -744,6 +759,20 @@ defmodule SignalGarden.Sim.Core do
           current
         end
 
+      nodes = put_in(state.nodes, [to, :known, state.origin], next)
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_mv_register(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      next = SignalGarden.Sim.MultiValueRegister.merge(current, payload)
       nodes = put_in(state.nodes, [to, :known, state.origin], next)
       state = %{state | nodes: nodes, delivered: state.delivered + 1}
       refresh_node_informed(state, to)
@@ -1087,6 +1116,10 @@ defmodule SignalGarden.Sim.Core do
   # register mode (last-writer-wins register)
   # ---------------------------------------------------------------------------
 
+  defp apply_write(%__MODULE__{mode: :mv_register} = state, node, value, bump_target?) do
+    apply_mv_write(state, node, value, bump_target?)
+  end
+
   defp apply_write(%__MODULE__{mode: :register} = state, node, value, bump_target?) do
     issued = state.writes_issued + 1
     target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
@@ -1111,12 +1144,58 @@ defmodule SignalGarden.Sim.Core do
     |> log_write(node, value)
   end
 
+  defp apply_mv_write(%__MODULE__{mode: :mv_register} = state, node, value, bump_target?) do
+    issued = state.writes_issued + 1
+    target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
+    sequence = Map.get(state.mv_tag_counters, node, 0) + 1
+    dot = {node, sequence}
+    current = get_in(state.nodes, [node, :known, state.origin])
+    next = SignalGarden.Sim.MultiValueRegister.write(current, dot, value)
+
+    target_state =
+      SignalGarden.Sim.MultiValueRegister.merge(
+        %{entries: state.mv_entries, context: state.mv_context},
+        next
+      )
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | writes_issued: issued,
+        writes_target: target,
+        mv_entries: target_state.entries,
+        mv_context: target_state.context,
+        mv_tag_counters: Map.put(state.mv_tag_counters, node, sequence),
+        latest: %{value: map_size(target_state.entries), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], next)
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_write(node, value)
+  end
+
   defp register_informed?(%__MODULE__{} = state, node_id) do
     node = state.nodes[node_id]
 
     node.up and
       state.writes_issued >= state.writes_target and
       get_in(node.known, [state.origin]).version == state.writes_issued
+  end
+
+  defp mv_register_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+    known = get_in(node.known, [state.origin])
+    target = %{entries: state.mv_entries, context: state.mv_context}
+
+    node.up and
+      state.writes_issued >= state.writes_target and
+      known == target
   end
 
   # ---------------------------------------------------------------------------
@@ -1180,7 +1259,8 @@ defmodule SignalGarden.Sim.Core do
     state.orset_ops_issued >= state.orset_ops_target
   end
 
-  defp fault_target_met?(%__MODULE__{mode: mode} = state) when mode in [:register, :map] do
+  defp fault_target_met?(%__MODULE__{mode: mode} = state)
+       when mode in [:register, :map, :mv_register] do
     state.writes_issued >= state.writes_target
   end
 
@@ -1210,6 +1290,9 @@ defmodule SignalGarden.Sim.Core do
 
   defp node_informed?(%__MODULE__{mode: :register} = state, node_id),
     do: register_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :mv_register} = state, node_id),
+    do: mv_register_informed?(state, node_id)
 
   defp node_informed?(%__MODULE__{mode: :map} = state, node_id),
     do: map_informed?(state, node_id)
@@ -1363,6 +1446,14 @@ defmodule SignalGarden.Sim.Core do
       orset_elements: Enum.sort(MapSet.to_list(state.orset_elements)),
       register_value: state.register_value,
       register_writes: state.writes_issued,
+      mv_writes: state.writes_issued,
+      mv_conflicts: map_size(state.mv_entries),
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: state.mv_entries,
+          context: state.mv_context
+        }),
+      mv_entries: snapshot_mv_entries(state),
       map_writes: state.writes_issued,
       map_keys: map_key_options(state),
       map_fields: snapshot_map_fields(state),
@@ -1415,6 +1506,10 @@ defmodule SignalGarden.Sim.Core do
     node.known[origin].version
   end
 
+  defp node_value(%__MODULE__{mode: :mv_register, origin: origin}, node) do
+    map_size(node.known[origin].entries)
+  end
+
   defp node_value(%__MODULE__{mode: :map} = state, node) do
     fields = get_in(node.known, [state.origin]).fields
 
@@ -1436,6 +1531,10 @@ defmodule SignalGarden.Sim.Core do
 
   defp node_version(%__MODULE__{mode: :register, origin: origin}, node) do
     node.known[origin].version
+  end
+
+  defp node_version(%__MODULE__{mode: :mv_register, origin: origin}, node) do
+    MapSet.size(node.known[origin].context)
   end
 
   defp node_version(%__MODULE__{mode: :map, origin: origin}, node) do
@@ -1487,6 +1586,14 @@ defmodule SignalGarden.Sim.Core do
     |> Enum.sort_by(fn {key, _field} -> key end)
     |> Enum.map(fn {key, %{value: value, version: version}} ->
       %{key: key, value: value, version: version}
+    end)
+  end
+
+  defp snapshot_mv_entries(%__MODULE__{mv_entries: entries}) do
+    entries
+    |> Enum.sort_by(fn {{node, sequence}, _value} -> {node, sequence} end)
+    |> Enum.map(fn {{node, sequence}, value} ->
+      %{node: node, sequence: sequence, value: value}
     end)
   end
 

@@ -237,6 +237,29 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.register_value == nil
   end
 
+  test "multi-value register mode shows concurrent values", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "conflict_board"})
+
+    assert has_element?(view, "#sg-mv-write-value")
+    assert render(view) =~ "nodes hold all concurrent values"
+    assert render(view) =~ "Values"
+
+    view
+    |> form("#sg-form-write", %{value: "Manual branch"})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.mv_writes == 1 end)
+    assert snapshot.mode == :mv_register
+    assert snapshot.mv_writes == 1
+    assert snapshot.mv_values == ["Manual branch"]
+    assert render(view) =~ "Concurrent values"
+    assert render(view) =~ "Manual branch"
+  end
+
   test "map mode shows the key picker and sets a service status", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

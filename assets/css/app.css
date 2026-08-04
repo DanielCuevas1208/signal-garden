@@ -899,6 +899,12 @@ body {
   font-weight: 600;
 }
 
+.sg-mv .sg-set__chip {
+  background: rgba(196, 181, 253, 0.09);
+  border-color: rgba(196, 181, 253, 0.38);
+  color: #ddd6fe;
+}
+
 .sg-register__value {
   margin: 0;
   padding: 12px 14px;

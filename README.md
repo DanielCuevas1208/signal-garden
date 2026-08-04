@@ -15,12 +15,13 @@ the same fault on another machine.
 - Logical time that has no link to the wall clock.
 - Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
-- Six gossip payloads: a rumor, a grow-only counter, a grow-only set, an observed-remove set, a register, and an LWW map.
+- Seven gossip payloads: a rumor, a grow-only counter, a grow-only set, an observed-remove set, a register, an LWW map, and an MV-register.
 - A grow-only counter (G-Counter) that converges across the network.
 - A grow-only set (G-Set) that spreads a collection across the network.
 - An observed-remove set (OR-set) where members join and leave the collection.
 - A last-writer-wins register (LWW register) where the newest write wins.
 - A last-writer-wins map (LWW map) where every key converges on its own.
+- A multi-value register (MV-register) where concurrent writes remain visible.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 - A headless replay tool that reproduces any run from the CLI.
@@ -37,6 +38,7 @@ lib/signal_garden/
     replay.ex         # Headless runner. Drives scenarios and summarizes results.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
+    multi_value_register.ex # Causal-dot merge rules for concurrent writes.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
@@ -95,7 +97,8 @@ the active scenario. Use **Import JSON** to paste a file and load it into the
 control room. Sample files ship at `priv/scenarios/ring.json`,
 `priv/scenarios/counter.json`, `priv/scenarios/set.json`,
 `priv/scenarios/roster.json`, `priv/scenarios/register.json`, and
-`priv/scenarios/service_board.json`.
+`priv/scenarios/service_board.json`, and
+`priv/scenarios/conflict_board.json`.
 
 ## Scenario files
 
@@ -115,7 +118,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with thirteen runs. Each one fixes a topology, a
+The scenario catalog ships with fifteen runs. Each one fixes a topology, a
 seed, and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -131,8 +134,10 @@ seed, and a set of network conditions.
 | Broken link | 12 | two links are cut, then healed |
 | Grow-only counter | 12 | five writes climb a G-Counter on a schedule |
 | Guest list | 12 | five names join a G-Set on a schedule |
+| Shared roster | 12 | names join and leave an observed-remove set |
 | Bulletin board | 12 | five notices overwrite an LWW register on a schedule |
 | Service board | 12 | five statuses update an LWW map on a schedule |
+| Conflict board | 12 | two concurrent notices remain visible in an MV-register |
 
 ## Link cuts
 
@@ -256,6 +261,21 @@ manual write survives only the current run. A write to a key that already
 changed still moves that key forward, because the version, not the status
 text, decides the winner.
 
+## Multi-value registers
+
+The **Conflict board** scenario demonstrates an MV-register.
+
+Each write receives a unique causal dot. A write removes values seen by its writer.
+
+Concurrent writes keep separate entries. The merge shows both values after convergence.
+
+The control room shows visible values in the **Concurrent values** card.
+It shows branch counts above each node.
+
+Use **Publish** to create another branch. A later write can resolve observed branches.
+
+The replay tool reports mv_values and mv_conflicts in JSON summaries.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
@@ -278,6 +298,7 @@ Guest list          12     converged    3638      603    21        1228
 Shared roster       12     converged    4219      688    36        1414
 Bulletin board      12     converged    3688      601    36        1239
 Service board       12     converged    3860      631    37        1298
+Conflict board      12     converged    1225      183    9         369
 ```
 
 The determinism check confirms the core is reproducible:
@@ -305,6 +326,9 @@ bulletin determinism: event_log equal       = true
 board determinism: convergence_time equal  = true
 board determinism: map_fields equal        = true
 board determinism: event_log equal         = true
+conflict determinism: convergence_time equal = true
+conflict determinism: values equal          = true
+conflict determinism: event_log equal       = true
 ```
 
 Reproduce this output from a checkout with:
@@ -369,6 +393,9 @@ run cannot converge before every scheduled notice is posted.
 In map mode, **Converged** means every node holds the latest write of every
 key. The run cannot converge before every scheduled status is set.
 
+In MV-register mode, **Converged** means every node holds every visible branch.
+A later write can replace branches that its writer has observed.
+
 ## Crash and restart
 
 A crash takes a node out of service. The node stops gossiping and forgets what
@@ -396,10 +423,10 @@ Run the full suite:
 mix test
 ```
 
-The suite has 195 tests. It covers the deterministic core, the counter CRDT,
-the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the topology
-builder, the scenario codec, and the scenario catalog. It also covers link
-cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
+The suite has 207 tests. It covers the deterministic core, the counter CRDT,
+the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the MV-register,
+the topology builder, the scenario codec, and the scenario catalog. It also
+covers link cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
 never sleep and never read the wall clock. Each core test replays a scenario
 and asserts on the resulting state.
 
@@ -421,6 +448,7 @@ mix precommit
 - The OR-set removes only tags already observed by the writer.
 - The register payload is an LWW register. The newest write wins; history is not kept.
 - The map payload is an LWW map. Keys only appear; they cannot be removed.
+- The MV-register keeps concurrent branches. It does not compact causal history.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
@@ -439,7 +467,8 @@ Later releases can build on this core without changing the model.
 - **Registers and CRDTs.** Done. The rumor now has an LWW register sibling with scheduled and manual writes.
 - **Maps and CRDTs.** Done. The rumor now has an LWW map sibling with scheduled and manual writes per key.
 - **Observed-remove sets.** Done. The Shared roster scenario models causal tags and concurrent add behavior.
-- **More CRDTs.** Consider a multi-value register and state compaction.
+- **Multi-value registers.** Done. The Conflict board keeps concurrent writes visible and exposes causal-dot evidence.
+- **More CRDTs.** Consider state compaction and a richer conflict timeline.
 
 ## License
 

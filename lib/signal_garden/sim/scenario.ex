@@ -14,6 +14,7 @@ defmodule SignalGarden.Sim.Scenario do
     * `:orset` - an observed-remove set, changed by add and remove fault actions
     * `:register` - a last-writer-wins register, written by write fault actions
     * `:map` - a last-writer-wins map, written by put fault actions
+    * `:mv_register` - a multi-value register, written by write fault actions
 
   Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
   per node id and merges peer state with element-wise max. The counter total
@@ -58,7 +59,7 @@ defmodule SignalGarden.Sim.Scenario do
             map_keys: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter | :set | :orset | :register | :map
+  @type mode :: :rumor | :counter | :set | :orset | :register | :map | :mv_register
 
   @type partition_change ::
           {:merge, :all}

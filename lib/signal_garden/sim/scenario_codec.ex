@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -384,6 +384,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
   defp decode_mode(%{"mode" => "set"}), do: {:ok, :set}
   defp decode_mode(%{"mode" => "orset"}), do: {:ok, :orset}
   defp decode_mode(%{"mode" => "register"}), do: {:ok, :register}
+  defp decode_mode(%{"mode" => "mv_register"}), do: {:ok, :mv_register}
   defp decode_mode(%{"mode" => "map"}), do: {:ok, :map}
   defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
   defp decode_mode(_), do: {:ok, :rumor}

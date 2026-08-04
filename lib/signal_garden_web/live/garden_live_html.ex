@@ -204,6 +204,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <% :register -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :mv_register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold all concurrent values
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :map -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the full map
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
@@ -342,6 +345,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                     </text>
                   <% end %>
                   <%= if sg.mode == :map do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
+                    </text>
+                  <% end %>
+                  <%= if sg.mode == :mv_register do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
@@ -641,17 +653,27 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </.form>
         <% end %>
 
-        <%= if @snapshot.mode == :register do %>
+        <%= if @snapshot.mode in [:register, :mv_register] do %>
           <.form for={nil} id="sg-form-write" phx-submit="publish_value" class="sg-faults__form">
             <div class="sg-faults__row">
               <input
-                id="sg-write-value"
+                id={
+                  if(@snapshot.mode == :mv_register, do: "sg-mv-write-value", else: "sg-write-value")
+                }
                 name="value"
                 type="text"
                 value={@fault_element}
                 class="sg-faults__input"
-                placeholder="notice text"
-                aria-label="Value to write to the register"
+                placeholder={
+                  if(@snapshot.mode == :mv_register, do: "concurrent notice", else: "notice text")
+                }
+                aria-label={
+                  if(
+                    @snapshot.mode == :mv_register,
+                    do: "Value to write to the multi-value register",
+                    else: "Value to write to the register"
+                  )
+                }
               />
               <button class="sg-btn sg-btn--write" type="submit">Publish</button>
             </div>
@@ -695,6 +717,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <% :orset -> %>
               Pick a node, then add a member, remove a member, or crash and restart it.
             <% :register -> %>
+              Pick a node, then post a notice or crash and restart it.
+            <% :mv_register -> %>
               Pick a node, then post a notice or crash and restart it.
             <% :map -> %>
               Pick a node, then set a service status or crash and restart it.
@@ -829,6 +853,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
           </div>
         <% end %>
+
+        <%= if @snapshot.mode == :mv_register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.mv_writes}</dd>
+          </div>
+          <div>
+            <dt>Values</dt><dd>{@snapshot.mv_conflicts}</dd>
+          </div>
+        <% end %>
         <%= if @snapshot.mode == :map do %>
           <div>
             <dt>Writes</dt><dd>{@snapshot.map_writes}</dd>
@@ -868,6 +901,17 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         <div class="sg-set">
           <h3 class="sg-card__title">Current notice</h3>
           <p class="sg-register__value">{@snapshot.register_value}</p>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :mv_register and @snapshot.mv_values != [] do %>
+        <div class="sg-set sg-mv">
+          <h3 class="sg-card__title">Concurrent values</h3>
+          <ul class="sg-set__list">
+            <li :for={value <- @snapshot.mv_values} class="sg-set__chip">
+              {value}
+            </li>
+          </ul>
         </div>
       <% end %>
 
