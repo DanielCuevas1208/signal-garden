@@ -27,6 +27,7 @@ defmodule SignalGarden.Sim.Scenario do
             drop_prob: 0.0,
             gossip_interval_ms: 90,
             partitions: %{},
+            link_cuts: [],
             fault_schedule: [],
             mode: :rumor
 
@@ -35,6 +36,9 @@ defmodule SignalGarden.Sim.Scenario do
   @type partition_change ::
           {:merge, :all}
           | {:assign, pos_integer(), integer()}
+          | {:cut, {pos_integer(), pos_integer()}}
+          | {:cut_link, {pos_integer(), pos_integer()}}
+          | {:heal_link, {pos_integer(), pos_integer()}}
           | {:crash, pos_integer()}
           | {:restart, pos_integer()}
           | {:increment, pos_integer(), pos_integer()}
@@ -53,6 +57,7 @@ defmodule SignalGarden.Sim.Scenario do
           drop_prob: float(),
           gossip_interval_ms: non_neg_integer(),
           partitions: %{pos_integer() => integer()},
+          link_cuts: [{pos_integer(), pos_integer()}],
           fault_schedule: [fault()],
           mode: mode()
         }

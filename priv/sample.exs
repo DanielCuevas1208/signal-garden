@@ -101,6 +101,30 @@ d = crash.()
 IO.puts("crash determinism: convergence_time equal = #{c.convergence_time == d.convergence_time}")
 IO.puts("crash determinism: event_log equal        = #{c.event_log == d.event_log}")
 
+# Determinism check: the broken link scenario must replay to the same state.
+cut = fn ->
+  Scenarios.fetch(:cut)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+g = cut.()
+h = cut.()
+
+IO.puts("cut determinism: convergence_time equal  = #{g.convergence_time == h.convergence_time}")
+IO.puts("cut determinism: event_log equal         = #{g.event_log == h.event_log}")
+
 # Determinism check: the counter scenario must converge to the same total.
 counter = fn ->
   Scenarios.fetch(:counter)

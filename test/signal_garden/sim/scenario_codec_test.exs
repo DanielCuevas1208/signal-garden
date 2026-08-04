@@ -141,6 +141,53 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert {:increment, 1, 2} in Enum.map(decoded.fault_schedule, & &1.action)
   end
 
+  test "link cuts round-trip through JSON" do
+    scenario = %{Scenarios.line() | link_cuts: [{2, 1}, {3, 4}]}
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.link_cuts == [{1, 2}, {3, 4}]
+  end
+
+  test "cut link and heal link faults round-trip through JSON" do
+    scenario = Scenarios.cut()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.id == :cut
+    assert decoded.link_cuts == []
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:cut, {1, 2}} in Enum.map(decoded.fault_schedule, & &1.action)
+    assert {:heal_link, {11, 12}} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "an exported broken link scenario replays to the same trace" do
+    scenario = Scenarios.cut()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+    assert run.(scenario).event_log == run.(decoded).event_log
+  end
+
+  test "link cuts on unknown endpoints are rejected" do
+    scenario = %{Scenarios.line() | link_cuts: [{1, 99}]}
+    json = ScenarioCodec.encode(scenario)
+    assert {:error, {:invalid_field, "link_cuts"}} = ScenarioCodec.decode(json)
+  end
+
   test "a decoded counter scenario converges to the same total" do
     scenario = Scenarios.counter()
     json = ScenarioCodec.encode(scenario)

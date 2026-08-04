@@ -338,6 +338,12 @@ body {
   border-style: dashed;
 }
 
+.sg-swatch--cut {
+  background: transparent;
+  border-color: var(--sg-fault);
+  border-style: dashed;
+}
+
 .sg-swatch--down {
   background: #3f1217;
   border-color: var(--sg-fault);
@@ -385,6 +391,37 @@ body {
 
 .sg-edge-partitioned {
   stroke-dasharray: 6 8;
+}
+
+.sg-edge-cut {
+  stroke-dasharray: 7 5;
+}
+
+.sg-edge-wrap {
+  cursor: pointer;
+  outline: none;
+}
+
+.sg-edge-wrap:focus-visible .sg-edge {
+  stroke-width: 3;
+}
+
+.sg-edge__hit {
+  stroke: transparent;
+  stroke-width: 14;
+  fill: none;
+}
+
+.sg-edge__cutdisc {
+  fill: #450a0a;
+  stroke: var(--sg-fault);
+  stroke-width: 1.5;
+}
+
+.sg-edge__cutcross {
+  stroke: var(--sg-fault);
+  stroke-width: 2.2;
+  stroke-linecap: round;
 }
 
 /* nodes ----------------------------------------------------------------- */

@@ -23,6 +23,13 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "the Broken link scenario converges once its links heal" do
+    scenario = Scenarios.fetch(:cut)
+    state = await_converge(Core.new(scenario), 200_000)
+    assert state.status == :converged
+    assert state.dropped > 0
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

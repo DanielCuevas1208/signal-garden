@@ -35,6 +35,8 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
       |> assign(:speed, 6)
       |> assign(:fault_node, snapshot.origin)
+      |> assign(:link_edges, edge_options(snapshot))
+      |> assign(:link_edge, first_edge_value(snapshot))
       |> assign(:show_import, false)
       |> assign(:import_json, "")
 
@@ -102,6 +104,27 @@ defmodule SignalGardenWeb.GardenLive do
 
   def handle_event("toggle_partition", %{"node" => node_id}, socket) do
     Sim.toggle_partition(parse_int(node_id, 1))
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_link_cut", %{"a" => a, "b" => b}, socket) do
+    Sim.toggle_link_cut(parse_int(a, 1), parse_int(b, 1))
+    {:noreply, socket}
+  end
+
+  def handle_event("select_link_edge", %{"edge" => edge}, socket) do
+    {:noreply, assign(socket, :link_edge, edge)}
+  end
+
+  def handle_event("cut_link", %{"edge" => edge}, socket) do
+    {a, b} = parse_edge(edge)
+    Sim.cut_link(a, b)
+    {:noreply, socket}
+  end
+
+  def handle_event("heal_link", %{"edge" => edge}, socket) do
+    {a, b} = parse_edge(edge)
+    Sim.heal_link(a, b)
     {:noreply, socket}
   end
 
@@ -183,10 +206,52 @@ defmodule SignalGardenWeb.GardenLive do
     |> assign(:selected_scenario, snapshot.scenario.id)
     |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
     |> assign(:drop_value, round(snapshot.drop_prob * 100))
+    |> assign(:link_edges, edge_options(snapshot))
+    |> assign(:link_edge, keep_edge(socket.assigns.link_edge, snapshot))
   end
 
   defp delay_to_form({_lo, hi}), do: hi
   defp delay_to_form(value) when is_integer(value), do: value
+
+  defp edge_options(snapshot) do
+    Enum.map(snapshot.edges, fn edge ->
+      %{value: edge_value(edge), label: edge_label(edge)}
+    end)
+  end
+
+  defp edge_value(%{a: a, b: b}), do: "#{a}-#{b}"
+
+  defp edge_label(%{a: a, b: b, cut: cut}) do
+    "#{a} - #{b}#{if cut, do: " (cut)", else: ""}"
+  end
+
+  defp first_edge_value(snapshot) do
+    case snapshot.edges do
+      [edge | _] -> edge_value(edge)
+      [] -> "1-2"
+    end
+  end
+
+  defp keep_edge(value, snapshot) do
+    if Enum.any?(snapshot.edges, &(edge_value(&1) == value)) do
+      value
+    else
+      first_edge_value(snapshot)
+    end
+  end
+
+  defp parse_edge("") do
+    {1, 2}
+  end
+
+  defp parse_edge(value) when is_binary(value) do
+    case String.split(value, "-", parts: 2) do
+      [a, b] -> {parse_int(a, 1), parse_int(b, 1)}
+      _ -> {1, 2}
+    end
+  end
+
+  defp parse_edge(_), do: {1, 2}
 
   defp parse_int(value, default) when is_binary(value) do
     case Integer.parse(value) do

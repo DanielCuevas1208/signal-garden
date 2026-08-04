@@ -209,6 +209,13 @@ defmodule SignalGarden.Sim.Replay do
   defp normalize_event(%{kind: kind} = entry) do
     base = %{t: entry.t, kind: kind, from: entry.from, to: entry.to, partition: entry.partition}
 
+    base =
+      if Map.has_key?(entry, :cut) do
+        Map.put(base, :cut, entry.cut)
+      else
+        base
+      end
+
     case kind do
       :increment -> Map.put(base, :amount, entry.amount)
       _ -> base

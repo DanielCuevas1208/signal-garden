@@ -87,6 +87,15 @@ defmodule SignalGarden.Sim.ReplayTest do
 
       assert Enum.any?(trace, &(&1.kind == :deliver))
     end
+
+    test "marks dropped events caused by a cut link" do
+      trace = Replay.event_trace(:cut)
+
+      cut_drop = Enum.find(trace, &(&1.kind == :dropped_cut))
+      assert cut_drop != nil
+      assert cut_drop.cut == true
+      assert cut_drop.to != nil
+    end
   end
 
   describe "determinism_check/1" do

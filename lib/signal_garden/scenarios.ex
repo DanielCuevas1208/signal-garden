@@ -21,6 +21,7 @@ defmodule SignalGarden.Scenarios do
       churn(),
       lossy(),
       crash(),
+      cut(),
       counter()
     ]
   end
@@ -191,6 +192,37 @@ defmodule SignalGarden.Scenarios do
         %{at: 2400, action: {:assign, 4, 1}, label: "Quick split"},
         %{at: 2450, action: {:assign, 5, 1}, label: "Quick split"},
         %{at: 3200, action: {:merge, :all}, label: "Heal"}
+      ]
+    }
+  end
+
+  @doc """
+  A ring where two links are cut early, isolating most nodes from the origin.
+
+  Cutting link 1-2 and link 11-12 splits the ring into two segments. The
+  origin keeps only node 12 as a neighbour, so most nodes cannot learn the
+  value. Healing both links lets gossip cross the cuts and convergence
+  completes.
+  """
+  def cut do
+    topology = Topology.ring(12)
+
+    %Scenario{
+      id: :cut,
+      name: "Broken link",
+      description: "Two ring links are cut at T=60, isolating most nodes. Heal at T=2000.",
+      seed: 5,
+      topology: topology,
+      origin: 1,
+      latest_value: 88,
+      delay_ms: {25, 55},
+      drop_prob: 0.0,
+      gossip_interval_ms: 80,
+      fault_schedule: [
+        %{at: 60, action: {:cut, {1, 2}}, label: "Link 1-2 is cut"},
+        %{at: 120, action: {:cut, {11, 12}}, label: "Link 11-12 is cut"},
+        %{at: 2000, action: {:heal_link, {11, 12}}, label: "Link 11-12 heals"},
+        %{at: 2400, action: {:heal_link, {1, 2}}, label: "Link 1-2 heals"}
       ]
     }
   end

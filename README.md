@@ -13,7 +13,7 @@ the same fault on another machine.
 
 - An actor model gossip engine written in pure Elixir.
 - Logical time that has no link to the wall clock.
-- Three network hazards: delay, message loss, and partitions.
+- Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
 - Two gossip payloads: a rumor and a grow-only counter.
 - A grow-only counter (G-Counter) that converges across the network.
@@ -40,8 +40,9 @@ lib/signal_garden/
 
 The `Core` module advances logical time in discrete steps. Each step pops one
 event from a priority queue. A gossip event makes a node send a message to one
-neighbour. The engine applies delay, loss, and partition checks, then schedules
-a delivery event in the future. Two runs with the same seed walk the same path.
+neighbour. The engine applies delay, loss, partition, and cut-link checks, then
+schedules a delivery event in the future. Two runs with the same seed walk the
+same path.
 
 The `Engine` GenServer owns a `Core` struct. On each animation frame it advances
 the core by a burst of events and broadcasts a snapshot over Phoenix PubSub.
@@ -78,8 +79,9 @@ http://localhost:4000
 ```
 
 Press **Run** to start the loop. Press **Step** to advance a fixed number of
-events. Click a node to toggle its partition group. Drag the sliders to change
-delay, loss rate, and speed. Pick a scenario from the list to load a new run.
+events. Click a node to toggle its partition group. Click an edge to cut or
+heal that link. Drag the sliders to change delay, loss rate, and speed. Pick a
+scenario from the list to load a new run.
 
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
 the box to write to a node. Use **Export JSON** to download the active
@@ -90,8 +92,9 @@ room. Sample files ship at `priv/scenarios/ring.json` and
 ## Scenario files
 
 A scenario file is versioned JSON. It carries the topology, the seed, the fault
-schedule, the payload mode, and every network parameter. Two machines can share
-one file and replay the same run.
+schedule, the payload mode, and every network parameter. It also carries the
+`link_cuts` list, so a broken link round-trips through a file. Two machines can
+share one file and replay the same run.
 
 Export a scenario from the control room, or build a file by hand. The format
 requires `format: 1` and a `topology` block with `nodes`, `edges`, and
@@ -104,7 +107,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with nine runs. Each one fixes a topology, a seed,
+The scenario catalog ships with ten runs. Each one fixes a topology, a seed,
 and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -117,7 +120,26 @@ and a set of network conditions.
 | Churn | 15 | partitions toggle on a schedule |
 | Lossy link | 14 | five percent of messages lost |
 | Crash and recover | 12 | two nodes crash, then restart |
+| Broken link | 12 | two links are cut, then healed |
 | Grow-only counter | 12 | five writes climb a G-Counter on a schedule |
+
+## Link cuts
+
+A link cut is an edge-level partition. It breaks one link in both directions.
+Every message across that link is dropped until you heal it. A group partition
+splits the whole network. A cut link breaks one edge.
+
+Cut links to slow a path or to isolate part of the network. Click an edge on
+the graph to toggle its cut. Use the **Link cut** box to cut or heal a specific
+edge.
+
+The **Broken link** scenario demonstrates the flow. It cuts two ring links
+early, isolating most nodes. Healing them lets gossip cross and convergence
+completes.
+
+A cut link records a `dropped (cut link)` event. The edge turns rose and shows
+a cut marker. The **heal** button repairs every cut link and merges every
+partition group.
 
 ## Counters and CRDTs
 
@@ -156,6 +178,7 @@ Healing partition   14     converged    1397      198    51        446
 Churn               15     converged    731       152    4         309
 Lossy link          14     converged    594       120    6         237
 Crash and recover   12     converged    1815      269    24        540
+Broken link         12     converged    2822      382    45        809
 Grow-only counter   12     converged    3832      617    44        1281
 ```
 
@@ -167,6 +190,8 @@ ring determinism: history equal          = true
 ring determinism: event_log equal        = true
 crash determinism: convergence_time equal = true
 crash determinism: event_log equal        = true
+cut determinism: convergence_time equal  = true
+cut determinism: event_log equal         = true
 counter determinism: convergence_time equal = true
 counter determinism: counter_total equal  = true
 counter determinism: event_log equal      = true
@@ -252,11 +277,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 87 tests. It covers the deterministic core, the counter CRDT,
+The suite has 104 tests. It covers the deterministic core, the counter CRDT,
 the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer, the LiveView, and the headless replay tool. Tests
-never sleep and never read the wall clock. Each core test replays a scenario
-and asserts on the resulting state.
+covers link cuts, the engine GenServer, the LiveView, and the headless replay
+tool. Tests never sleep and never read the wall clock. Each core test replays
+a scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -268,7 +293,7 @@ mix precommit
 ## Limitations
 
 - Logical time is synthetic, so convergence times compare runs, not real hosts.
-- Partitions are modelled as group labels, not as link failures per edge.
+- Partitions are modelled as group labels. Link cuts cover the per-edge case.
 - Crashes lose all node state. There is no disk or persistent memory model.
 - The engine runs one scenario at a time inside a single GenServer.
 - The counter payload is a G-Counter. It only grows; it cannot be decremented.
@@ -285,7 +310,7 @@ Later releases can build on this core without changing the model.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
 - **Headless replay tool.** Done. The `mix signal_garden.replay` task prints summaries, traces, and determinism checks from the CLI.
-- **Edge-level partitions.** Cut a single link instead of a node group.
+- **Edge-level partitions.** Done. Cut and heal single links from the graph, the fault box, or a scenario file.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
 ## License

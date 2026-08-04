@@ -18,8 +18,13 @@ defmodule SignalGarden.Sim.Core do
   network applies three hazards between send and deliver:
 
     * delay - the message lands later in logical time
+    * cut link - a broken edge drops every message that crosses it
     * partition - a message that crosses a partition boundary is dropped
     * loss - a fair die roll drops a fixed fraction of messages
+
+  A link cut is an edge-level fault. It breaks one link between two nodes in
+  both directions, while a group partition splits the whole network. Cut a
+  link to isolate a node or to slow a path. Heal it to restore the edge.
 
   A node can also crash. A crashed node stops gossiping, forgets what it
   knew, and drops the deliveries that arrive while it is down. Restarting
@@ -81,6 +86,7 @@ defmodule SignalGarden.Sim.Core do
     seq: 0,
     clock: 0,
     partitions: %{},
+    link_cuts: MapSet.new(),
     delay_ms: {35, 70},
     drop_prob: 0.0,
     gossip_interval_ms: 90,
@@ -129,6 +135,7 @@ defmodule SignalGarden.Sim.Core do
       drop_prob: scenario.drop_prob,
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
+      link_cuts: MapSet.new(scenario.link_cuts, &edge_key/1),
       informed: initial_informed(scenario),
       log_size: 80
     }
@@ -234,7 +241,31 @@ defmodule SignalGarden.Sim.Core do
   end
 
   def command(%__MODULE__{} = state, {:merge, :all}) do
-    %{state | partitions: %{}}
+    %{state | partitions: %{}, link_cuts: MapSet.new()}
+  end
+
+  def command(%__MODULE__{} = state, {:cut, {a, b}}) when is_integer(a) and is_integer(b) do
+    %{state | link_cuts: MapSet.put(state.link_cuts, edge_key(a, b))}
+  end
+
+  def command(%__MODULE__{} = state, {:cut_link, {a, b}}) when is_integer(a) and is_integer(b) do
+    command(state, {:cut, {a, b}})
+  end
+
+  def command(%__MODULE__{} = state, {:heal_link, {a, b}}) when is_integer(a) and is_integer(b) do
+    %{state | link_cuts: MapSet.delete(state.link_cuts, edge_key(a, b))}
+  end
+
+  def command(%__MODULE__{} = state, {:toggle_link_cut, {a, b}})
+      when is_integer(a) and is_integer(b) do
+    key = edge_key(a, b)
+
+    cuts =
+      if MapSet.member?(state.link_cuts, key),
+        do: MapSet.delete(state.link_cuts, key),
+        else: MapSet.put(state.link_cuts, key)
+
+    %{state | link_cuts: cuts}
   end
 
   def command(%__MODULE__{} = state, {:crash, node}) when is_integer(node) do
@@ -459,6 +490,7 @@ defmodule SignalGarden.Sim.Core do
     payload = get_in(state.nodes, [from, :known, state.origin])
     key = edge_key(from, to)
     same_partition = same_partition?(state.partitions, from, to)
+    cut = MapSet.member?(state.link_cuts, key)
 
     {survives, rng} =
       if state.drop_prob > 0.0 do
@@ -470,6 +502,12 @@ defmodule SignalGarden.Sim.Core do
     state = %{state | rng: rng}
 
     cond do
+      cut ->
+        state
+        |> Map.put(:dropped, state.dropped + 1)
+        |> log_event(:dropped_cut, from, to, cut: true)
+        |> tap_edge(key, :cut)
+
       not same_partition ->
         state
         |> Map.put(:dropped, state.dropped + 1)
@@ -623,7 +661,7 @@ defmodule SignalGarden.Sim.Core do
     %{state | history: history, steps: state.steps + 1}
   end
 
-  defp log_event(%__MODULE__{} = state, kind, from, to) do
+  defp log_event(%__MODULE__{} = state, kind, from, to, extra \\ []) do
     entry = %{
       t: state.clock,
       kind: kind,
@@ -631,6 +669,8 @@ defmodule SignalGarden.Sim.Core do
       to: to,
       partition: Map.get(state.partitions, from, 0) != Map.get(state.partitions, to, 0)
     }
+
+    entry = Map.merge(entry, Map.new(extra))
 
     log = [entry | state.event_log]
     log = Enum.take(log, state.log_size)
@@ -732,6 +772,7 @@ defmodule SignalGarden.Sim.Core do
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
       partitions: state.partitions,
+      link_cuts: MapSet.to_list(state.link_cuts),
       nodes: snapshot_nodes(state),
       edges: snapshot_edges(state),
       history: state.history,
@@ -785,6 +826,7 @@ defmodule SignalGarden.Sim.Core do
         key: key,
         last_time: t,
         last_kind: kind,
+        cut: MapSet.member?(state.link_cuts, key),
         partitioned: Map.get(state.partitions, a, 0) != Map.get(state.partitions, b, 0)
       }
     end)
@@ -800,6 +842,8 @@ defmodule SignalGarden.Sim.Core do
       seed: scenario.seed
     }
   end
+
+  defp edge_key({a, b}), do: edge_key(a, b)
 
   defp edge_key(a, b), do: if(a <= b, do: {a, b}, else: {b, a})
 end

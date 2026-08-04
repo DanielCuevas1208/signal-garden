@@ -63,10 +63,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     partitioned = edge.partitioned
 
     cond do
+      edge.cut -> "#fb7185"
       partitioned and recent and kind == :deliver -> "#fca5a5"
       partitioned -> "#b45309"
       recent and kind == :deliver -> "#22d3ee"
-      recent and kind in [:dropped_loss, :dropped_partition] -> "#fb7185"
+      recent and kind in [:dropped_loss, :dropped_partition, :dropped_cut] -> "#fb7185"
       true -> "#334155"
     end
   end
@@ -75,6 +76,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     recent = recent?(clock, edge.last_time)
 
     cond do
+      edge.cut -> "sg-edge-cut"
       recent and edge.last_kind == :deliver -> "sg-edge-flow"
       edge.partitioned -> "sg-edge-partitioned"
       true -> ""
@@ -82,7 +84,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   end
 
   def edge_width(edge, clock) do
-    if recent?(clock, edge.last_time), do: 2.6, else: 1.4
+    cond do
+      edge.cut -> 1.8
+      recent?(clock, edge.last_time) -> 2.6
+      true -> 1.4
+    end
   end
 
   def recent?(clock, time) when is_integer(clock) and is_integer(time) do
@@ -136,6 +142,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :deliver -> "text-cyan-300"
       :dropped_partition -> "text-amber-300"
       :dropped_loss -> "text-rose-300"
+      :dropped_cut -> "text-rose-300"
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
@@ -146,6 +153,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:deliver), do: "delivered"
   def log_label(:dropped_partition), do: "dropped (partition)"
   def log_label(:dropped_loss), do: "dropped (loss)"
+  def log_label(:dropped_cut), do: "dropped (cut link)"
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
@@ -171,6 +179,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--split"></i>partitioned</span>
+          <span class="sg-legend__item"><i class="sg-swatch sg-swatch--cut"></i>cut link</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
@@ -207,17 +216,43 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               </defs>
 
               <g class="sg-edges">
-                <line
+                <g
                   :for={edge <- @snapshot.edges}
-                  x1={px(edge.a, sg, :x)}
-                  y1={px(edge.a, sg, :y)}
-                  x2={px(edge.b, sg, :x)}
-                  y2={px(edge.b, sg, :y)}
-                  class={"sg-edge #{edge_class(edge, sg.clock)}"}
-                  stroke={edge_stroke(edge, sg.clock)}
-                  stroke-width={edge_width(edge, sg.clock)}
-                  stroke-dasharray={edge.partitioned && "6 6"}
-                />
+                  class="sg-edge-wrap"
+                  phx-click="toggle_link_cut"
+                  phx-value-a={edge.a}
+                  phx-value-b={edge.b}
+                  role="button"
+                  tabindex="0"
+                  aria-label={"Toggle link #{edge.a} - #{edge.b}"}
+                >
+                  <line
+                    class="sg-edge__hit"
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                  />
+                  <line
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                    class={"sg-edge #{edge_class(edge, sg.clock)}"}
+                    stroke={edge_stroke(edge, sg.clock)}
+                    stroke-width={edge_width(edge, sg.clock)}
+                  />
+                  <%= if edge.cut do %>
+                    <g
+                      class="sg-edge__cutmark"
+                      transform={"translate(#{mx(edge, sg)} #{my(edge, sg)})"}
+                    >
+                      <circle r="7" class="sg-edge__cutdisc" />
+                      <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" class="sg-edge__cutcross" />
+                      <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" class="sg-edge__cutcross" />
+                    </g>
+                  <% end %>
+                </g>
               </g>
 
               <g class="sg-nodes">
@@ -302,6 +337,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   defp px(id, sg, :x), do: project(sg_layout(sg, id)) |> elem(0)
   defp px(id, sg, :y), do: project(sg_layout(sg, id)) |> elem(1)
 
+  defp mx(edge, sg), do: (px(edge.a, sg, :x) + px(edge.b, sg, :x)) / 2
+  defp my(edge, sg), do: (px(edge.a, sg, :y) + px(edge.b, sg, :y)) / 2
+
   defp py_label(id, sg) do
     project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 14)
   end
@@ -352,6 +390,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -366,6 +406,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         drop_value={@drop_value}
         speed={@speed}
         fault_node={@fault_node}
+        link_edges={@link_edges}
+        link_edge={@link_edge}
         show_import={@show_import}
         import_json={@import_json}
       />
@@ -382,6 +424,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -527,10 +571,44 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         </p>
       </div>
 
+      <div class="sg-faults">
+        <div class="sg-faults__head">Link cut</div>
+        <.form for={nil} id="sg-form-link" phx-change="select_link_edge" class="sg-faults__form">
+          <div class="sg-faults__row">
+            <select id="sg-link-edge" name="edge" class="sg-faults__select">
+              <%= for edge <- @link_edges do %>
+                <option value={edge.value} selected={edge.value == @link_edge}>
+                  {edge.label}
+                </option>
+              <% end %>
+            </select>
+            <button
+              class="sg-btn sg-btn--fault"
+              type="button"
+              phx-click="cut_link"
+              phx-value-edge={@link_edge}
+            >
+              Cut
+            </button>
+            <button
+              class="sg-btn sg-btn--heal"
+              type="button"
+              phx-click="heal_link"
+              phx-value-edge={@link_edge}
+            >
+              Heal
+            </button>
+          </div>
+        </.form>
+        <p class="sg-faults__note">
+          Pick an edge, then cut or heal it. Click any edge on the graph to toggle its cut.
+        </p>
+      </div>
+
       <div class="sg-controls__hint">
         Click a node to toggle its partition group. Click
         <button class="sg-link" phx-click="merge" type="button">heal</button>
-        to merge all groups.
+        to merge all groups and repair every cut link.
       </div>
 
       <div class="sg-share">

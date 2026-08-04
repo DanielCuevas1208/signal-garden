@@ -54,11 +54,9 @@ defmodule SignalGardenWeb.GardenLiveTest do
     {:ok, view, _html} = live(conn, ~p"/")
 
     view |> render_click("start")
-    # let the engine broadcast at least one snapshot
-    _ = :sys.get_state(SignalGarden.Sim.Engine)
     view |> render_click("step", %{"count" => "10"})
 
-    snapshot = SignalGarden.Sim.snapshot()
+    snapshot = await_engine(fn snap -> snap.clock >= 0 end)
     assert snapshot.clock >= 0
   end
 
@@ -70,16 +68,14 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert has_element?(view, "button", "Restart")
 
     view |> render_click("crash", %{"node" => "2"})
-    _ = :sys.get_state(SignalGarden.Sim.Engine)
 
-    snapshot = SignalGarden.Sim.snapshot()
+    snapshot = await_engine(fn snap -> Enum.any?(snap.nodes, &(&1.id == 2 and not &1.up)) end)
     down = Enum.find(snapshot.nodes, &(&1.id == 2))
     assert down.up == false
 
     view |> render_click("restart", %{"node" => "2"})
-    _ = :sys.get_state(SignalGarden.Sim.Engine)
 
-    snapshot = SignalGarden.Sim.snapshot()
+    snapshot = await_engine(fn snap -> Enum.any?(snap.nodes, &(&1.id == 2 and &1.up)) end)
     up = Enum.find(snapshot.nodes, &(&1.id == 2))
     assert up.up == true
   end
@@ -96,11 +92,111 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert render(view) =~ "nodes at total"
 
     view |> render_click("increment", %{"node" => "2"})
-    _ = :sys.get_state(SignalGarden.Sim.Engine)
 
-    snapshot = SignalGarden.Sim.snapshot()
+    snapshot = await_engine(fn snap -> snap.counter_writes == 1 end)
     assert snapshot.mode == :counter
     assert snapshot.counter_writes == 1
     assert snapshot.counter_total == 1
+  end
+
+  test "link cut controls are present", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#sg-link-edge")
+    assert has_element?(view, "button", "Cut")
+    assert has_element?(view, "button", "Heal")
+    assert has_element?(view, ".sg-legend__item", "cut link")
+  end
+
+  test "clicking an edge toggles its cut state", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "line"})
+
+    view |> render_click("toggle_link_cut", %{"a" => "1", "b" => "2"})
+
+    snapshot =
+      await_engine(fn snap ->
+        Enum.any?(snap.edges, &(&1.a == 1 and &1.b == 2 and &1.cut))
+      end)
+
+    edge = Enum.find(snapshot.edges, &(&1.a == 1 and &1.b == 2))
+    assert edge.cut == true
+
+    view |> render_click("toggle_link_cut", %{"a" => "2", "b" => "1"})
+
+    snapshot =
+      await_engine(fn snap ->
+        Enum.any?(snap.edges, &(&1.a == 1 and &1.b == 2 and not &1.cut))
+      end)
+
+    edge = Enum.find(snapshot.edges, &(&1.a == 1 and &1.b == 2))
+    assert edge.cut == false
+  end
+
+  test "the link cut picker cuts and heals the selected edge", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "line"})
+
+    view |> render_click("cut_link", %{"edge" => "1-2"})
+
+    snapshot =
+      await_engine(fn snap ->
+        Enum.any?(snap.edges, &(&1.a == 1 and &1.b == 2 and &1.cut))
+      end)
+
+    assert Enum.find(snapshot.edges, &(&1.a == 1 and &1.b == 2)).cut == true
+
+    view |> render_click("heal_link", %{"edge" => "1-2"})
+
+    snapshot =
+      await_engine(fn snap ->
+        Enum.any?(snap.edges, &(&1.a == 1 and &1.b == 2 and not &1.cut))
+      end)
+
+    assert Enum.find(snapshot.edges, &(&1.a == 1 and &1.b == 2)).cut == false
+  end
+
+  test "the Broken link scenario loads and shows cut edges", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "cut"})
+
+    assert render(view) =~ "Broken link"
+
+    view |> render_click("step", %{"count" => "400"})
+
+    snapshot =
+      await_engine(fn snap -> Enum.any?(snap.edges, & &1.cut) end)
+
+    assert snapshot.scenario.id == :cut
+    assert Enum.any?(snapshot.edges, & &1.cut)
+  end
+
+  # The LiveView sends engine commands as fire-and-forget casts. Poll the
+  # engine until the latest snapshot matches so an assertion never reads the
+  # state before the cast in transit is applied.
+  defp await_engine(fun) do
+    Enum.reduce_while(1..200, :pending, fn _, _ ->
+      _ = :sys.get_state(SignalGarden.Sim.Engine)
+      snap = SignalGarden.Sim.snapshot()
+
+      if fun.(snap) do
+        {:halt, snap}
+      else
+        {:cont, :pending}
+      end
+    end)
+    |> case do
+      :pending -> SignalGarden.Sim.snapshot()
+      snap -> snap
+    end
   end
 end

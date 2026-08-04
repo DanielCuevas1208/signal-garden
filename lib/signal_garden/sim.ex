@@ -62,6 +62,15 @@ defmodule SignalGarden.Sim do
   @doc "Toggle a node between group zero and group one."
   def toggle_partition(node), do: Engine.toggle_partition(node)
 
+  @doc "Cut the link between two nodes, dropping every message across it."
+  def cut_link(a, b), do: Engine.cut_link(a, b)
+
+  @doc "Restore the link between two nodes."
+  def heal_link(a, b), do: Engine.heal_link(a, b)
+
+  @doc "Toggle whether the link between two nodes is cut."
+  def toggle_link_cut(a, b), do: Engine.toggle_link_cut(a, b)
+
   @doc "Take a node out of service until it is restarted."
   def crash(node), do: Engine.crash(node)
 
