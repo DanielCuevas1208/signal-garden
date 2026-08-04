@@ -15,7 +15,7 @@ defmodule SignalGarden.Sim.Core do
 
   On a gossip tick a node chooses one neighbour, copies its own knowledge to
   that neighbour through a message, and reschedules the next tick. The
-  network applies three hazards between send and deliver:
+  network applies four hazards between send and deliver:
 
     * delay - the message lands later in logical time
     * cut link - a broken edge drops every message that crosses it
@@ -49,7 +49,7 @@ defmodule SignalGarden.Sim.Core do
 
   ## Modes
 
-  A scenario runs in one of two modes.
+  A scenario selects one of six payload modes.
 
   The `:rumor` mode (the default) gossips one value with a version. The origin
   node seeds the value, and a node becomes informed when it holds that exact
@@ -136,6 +136,8 @@ defmodule SignalGarden.Sim.Core do
     orset_adds_issued: 0,
     orset_removes_issued: 0,
     orset_elements: MapSet.new(),
+    # The authoritative union keeps concurrent operations separate from replica knowledge.
+    orset_target_store: %{},
     orset_tag_counters: %{},
     writes_issued: 0,
     writes_target: 0,
@@ -186,6 +188,7 @@ defmodule SignalGarden.Sim.Core do
       orset_adds_issued: 0,
       orset_removes_issued: 0,
       orset_elements: MapSet.new(),
+      orset_target_store: %{},
       orset_tag_counters: %{},
       writes_issued: 0,
       writes_target: scheduled_writes(scenario),
@@ -982,10 +985,12 @@ defmodule SignalGarden.Sim.Core do
     tags = %{existing | adds: MapSet.put(existing.adds, tag)}
     store = Map.put(store, element, tags)
 
+    target_store = merge_orset_store(state.orset_target_store, store)
+    elements = orset_membership(target_store)
+
     ops_issued = state.orset_ops_issued + 1
     adds_issued = state.orset_adds_issued + 1
     target = if bump_target?, do: state.orset_ops_target + 1, else: state.orset_ops_target
-    elements = MapSet.put(state.orset_elements, element)
 
     {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
 
@@ -994,6 +999,7 @@ defmodule SignalGarden.Sim.Core do
       | orset_ops_issued: ops_issued,
         orset_ops_target: target,
         orset_adds_issued: adds_issued,
+        orset_target_store: target_store,
         orset_elements: elements,
         orset_tag_counters: Map.put(state.orset_tag_counters, node, elem(tag, 1)),
         latest: %{value: MapSet.size(elements), version: ops_issued},
@@ -1023,10 +1029,12 @@ defmodule SignalGarden.Sim.Core do
 
     store = Map.put(store, element, tags)
 
+    target_store = merge_orset_store(state.orset_target_store, store)
+    elements = orset_membership(target_store)
+
     ops_issued = state.orset_ops_issued + 1
     removes_issued = state.orset_removes_issued + 1
     target = if bump_target?, do: state.orset_ops_target + 1, else: state.orset_ops_target
-    elements = MapSet.delete(state.orset_elements, element)
 
     {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
 
@@ -1035,6 +1043,7 @@ defmodule SignalGarden.Sim.Core do
       | orset_ops_issued: ops_issued,
         orset_ops_target: target,
         orset_removes_issued: removes_issued,
+        orset_target_store: target_store,
         orset_elements: elements,
         latest: %{value: MapSet.size(elements), version: ops_issued},
         status: status,

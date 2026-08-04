@@ -203,6 +203,31 @@ defmodule SignalGarden.Sim.OrsetTest do
     assert state.orset_elements == MapSet.new()
   end
 
+  test "a concurrent add survives a remove that did not observe its tag" do
+    scenario = %Scenario{
+      Scenarios.roster()
+      | topology: SignalGarden.Sim.Topology.line(2),
+        fault_schedule: []
+    }
+
+    state = Core.new(scenario)
+    state = Core.command(state, {:add, 1, "Ada"})
+    state = Core.command(state, {:remove, 2, "Ada"})
+
+    assert state.orset_elements == MapSet.new(["Ada"])
+
+    state = deliver_payload(state, 1, 2)
+    state = deliver_payload(state, 2, 1)
+
+    memberships =
+      Enum.map(scenario.topology.nodes, fn node_id ->
+        store = get_in(state.nodes, [node_id, :known, state.origin]).store
+        orset_membership(store)
+      end)
+
+    assert Enum.all?(memberships, &(&1 == MapSet.new(["Ada"])))
+  end
+
   # ---------------------------------------------------------------------------
   # faults and orset state
   # ---------------------------------------------------------------------------

@@ -216,6 +216,22 @@ post after it converged, so you can watch the new notice spread. A manual
 write survives only the current run. A write with the same text still moves
 the version forward, because the version, not the text, decides the winner.
 
+## Observed-remove sets
+
+The **Shared roster** scenario demonstrates an observed-remove set (OR-set).
+
+Each add creates a unique tag. A remove records tags observed by that replica.
+Replicas merge add tags and remove tags with set union.
+
+A concurrent add survives an unseen remove. A remove only affects observed tags.
+A later remove can delete that concurrent add after it becomes visible.
+
+The control room shows current members in the **Current roster** card. Use
+**Add** and **Remove** in the Node fault panel to change the roster.
+
+Convergence requires every scheduled operation. Manual operations re-arm a
+completed run. A crashed node loses its local tags and learns them again.
+
 ## Maps and CRDTs
 
 The **Service board** scenario swaps the rumor for an LWW map. This is a map
@@ -259,6 +275,7 @@ Crash and recover   12     converged    1815      269    24        540
 Broken link         12     converged    2822      382    45        809
 Grow-only counter   12     converged    3832      617    44        1281
 Guest list          12     converged    3638      603    21        1228
+Shared roster       12     converged    4219      688    36        1414
 Bulletin board      12     converged    3688      601    36        1239
 Service board       12     converged    3860      631    37        1298
 ```
@@ -279,6 +296,9 @@ counter determinism: event_log equal      = true
 guest determinism: convergence_time equal = true
 guest determinism: elements equal        = true
 guest determinism: event_log equal        = true
+roster determinism: convergence_time equal = true
+roster determinism: elements equal        = true
+roster determinism: event_log equal       = true
 bulletin determinism: convergence_time equal = true
 bulletin determinism: register value equal = true
 bulletin determinism: event_log equal       = true
@@ -340,6 +360,9 @@ separated the origin from the rest of the network.
 In counter mode, **Converged** means every node holds the final counter total.
 The run cannot converge before every scheduled write is issued.
 
+In OR-set mode, **Converged** means every node holds the current roster.
+An unseen concurrent add remains until a later remove observes its tag.
+
 In register mode, **Converged** means every node holds the latest write. The
 run cannot converge before every scheduled notice is posted.
 
@@ -373,12 +396,12 @@ Run the full suite:
 mix test
 ```
 
-The suite has 168 tests. It covers the deterministic core, the counter CRDT,
-the set CRDT, the register CRDT, the map CRDT, the topology builder, the
-scenario codec, and the scenario catalog. It also covers link cuts, the
-engine GenServer, the LiveView, and the headless replay tool. Tests never
-sleep and never read the wall clock. Each core test replays a scenario and
-asserts on the resulting state.
+The suite has 195 tests. It covers the deterministic core, the counter CRDT,
+the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the topology
+builder, the scenario codec, and the scenario catalog. It also covers link
+cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
+never sleep and never read the wall clock. Each core test replays a scenario
+and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -395,6 +418,7 @@ mix precommit
 - The engine runs one scenario at a time inside a single GenServer.
 - The counter payload is a G-Counter. It only grows; it cannot be decremented.
 - The set payload is a G-Set. Elements join; they cannot leave.
+- The OR-set removes only tags already observed by the writer.
 - The register payload is an LWW register. The newest write wins; history is not kept.
 - The map payload is an LWW map. Keys only appear; they cannot be removed.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
@@ -414,7 +438,8 @@ Later releases can build on this core without changing the model.
 - **Edge-level partitions.** Done. Cut and heal single links from the graph, the fault box, or a scenario file.
 - **Registers and CRDTs.** Done. The rumor now has an LWW register sibling with scheduled and manual writes.
 - **Maps and CRDTs.** Done. The rumor now has an LWW map sibling with scheduled and manual writes per key.
-- **More CRDTs.** Add an OR-set so elements can join and leave the collection.
+- **Observed-remove sets.** Done. The Shared roster scenario models causal tags and concurrent add behavior.
+- **More CRDTs.** Consider a multi-value register and state compaction.
 
 ## License
 
