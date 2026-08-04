@@ -19,6 +19,7 @@ the same fault on another machine.
 - A grow-only counter (G-Counter) that converges across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
+- A headless replay tool that reproduces any run from the CLI.
 
 ## Architecture
 
@@ -29,6 +30,7 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
+    replay.ex         # Headless runner. Drives scenarios and summarizes results.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
@@ -45,6 +47,10 @@ The `Engine` GenServer owns a `Core` struct. On each animation frame it advances
 the core by a burst of events and broadcasts a snapshot over Phoenix PubSub.
 The LiveView subscribes to that topic and re-renders the graph. The core never
 touches the network, so tests stay fast and deterministic.
+
+The `Replay` module drives the same core with no engine and no browser. It runs
+a scenario to completion and returns a summary. The `mix signal_garden.replay`
+task wraps it for the command line. See the "Headless replay" section below.
 
 The web layer lives in `lib/signal_garden_web/`. A single LiveView renders the
 control room. Plain HEEx templates use hand-written CSS classes, not a UI kit.
@@ -169,8 +175,39 @@ counter determinism: event_log equal      = true
 Reproduce this output from a checkout with:
 
 ```
-mix run --no-start priv/sample.exs
+mix signal_garden.replay
 ```
+
+The legacy script `mix run --no-start priv/sample.exs` prints the same table
+and the same determinism checks.
+
+## Headless replay
+
+Run any scenario from the command line. The replay tool drives the pure core
+with no browser and no animation loop. It prints the outcome table above. Two
+runs always produce identical output, which makes the tool a reproducibility
+check for scripts and CI.
+
+```
+mix signal_garden.replay
+mix signal_garden.replay ring
+mix signal_garden.replay priv/scenarios/ring.json
+```
+
+The first command runs every built-in scenario. Pass a scenario id or a file
+path to run a single scenario. Add an option to change the output:
+
+| Option | Output |
+| --- | --- |
+| `--json` | One JSON document with a summary per scenario |
+| `--trace` | The recent event trace as JSON |
+| `--check` | A determinism check for one scenario |
+| `--check-all` | A determinism check for every scenario |
+| `--help` | Usage text |
+
+A determinism check runs the scenario twice and compares the outcomes. It
+prints one line per scenario. It exits non-zero when a run is not
+reproducible. The CI workflow runs `--check-all` on every push.
 
 ## Status model
 
@@ -215,11 +252,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
+The suite has 87 tests. It covers the deterministic core, the counter CRDT,
 the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+covers the engine GenServer, the LiveView, and the headless replay tool. Tests
+never sleep and never read the wall clock. Each core test replays a scenario
+and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -238,6 +275,7 @@ mix precommit
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
+- The event trace is a rolling window of the 80 most recent events, not the full run.
 
 ## Roadmap
 
@@ -246,7 +284,7 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. The `mix signal_garden.replay` task prints summaries, traces, and determinism checks from the CLI.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
 
