@@ -19,6 +19,7 @@ the same fault on another machine.
 - A grow-only counter (G-Counter) that converges across the network.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
+- A headless CLI that replays any scenario and prints a full event trace.
 
 ## Architecture
 
@@ -26,6 +27,7 @@ Signal Garden separates the deterministic core from the live interface.
 
 ```
 lib/signal_garden/
+  replay.ex           # Headless replay: full trace, determinism check, CLI text.
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
@@ -34,6 +36,8 @@ lib/signal_garden/
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
+lib/mix/tasks/
+  signal_garden.replay.ex # The `mix signal_garden.replay` command.
 ```
 
 The `Core` module advances logical time in discrete steps. Each step pops one
@@ -89,7 +93,8 @@ one file and replay the same run.
 
 Export a scenario from the control room, or build a file by hand. The format
 requires `format: 1` and a `topology` block with `nodes`, `edges`, and
-`layout`. Load a file in the browser or decode it in tests:
+`layout`. Load a file in the browser, decode it in tests, or replay it from
+the CLI:
 
 ```
 alias SignalGarden.Sim.ScenarioCodec
@@ -172,6 +177,84 @@ Reproduce this output from a checkout with:
 mix run --no-start priv/sample.exs
 ```
 
+## Headless replay
+
+The `mix signal_garden.replay` command runs a scenario without a browser. It
+drives the pure core, prints a summary, and dumps the full event trace. It
+accepts a catalog id or a JSON scenario file:
+
+```
+mix signal_garden.replay ring
+mix signal_garden.replay priv/scenarios/counter.json
+```
+
+A single run prints the summary:
+
+```
+Scenario: Ring  (12 nodes, seed 2, rumor)
+Status: converged   Converged at 750 ms
+Hops: 120   Delivered: 115   Dropped: 0   Steps: 236
+Fingerprint: 930fc7ea1766b00cbe83a01612e46ad0ebb6dd1c93a862ebbbb669e439cbdd8e
+```
+
+The event trace follows the summary. Each line records one send at its
+logical time:
+
+```
+Event trace (120 entries)
+t=     1  send       5 -> 6
+t=     2  send       1 -> 2
+t=    86  send       7 -> 6
+```
+
+Faults appear as their own lines. The crash scenario adds crashed and
+restarted entries, and counter mode adds write entries:
+
+```
+t=   500  crashed    4
+t=  1500  restarted  4
+t=   400  write      1 +1
+```
+
+The fingerprint is a SHA-256 digest of the trace. Two machines that replay
+the same scenario produce the same digest.
+
+Use `--check` to confirm a scenario is reproducible. The command runs it
+twice and compares every field:
+
+```
+mix signal_garden.replay crash --check
+```
+
+```
+Crash and recover: deterministic. Two runs produced identical traces.
+  Converged at: 1815 ms   Events: 273   Steps: 540
+  Fingerprint: 1d133cfafe64b2636d84b7623f965edaec5ec8f08031c4e8b95867ddd0f72390
+```
+
+Without an argument, the command replays every built-in scenario and prints
+the summary table shown above. Add `--check` to verify the whole catalog:
+
+```
+mix signal_garden.replay --check
+```
+
+```
+scenario            deterministic  t(ms)     events  fingerprint
+Line                yes            772       72      b18a083848f24c6770e7bcb10478a2b3e89e03b4da6e828b245f7f9ecbc2917f
+Ring                yes            750       120     930fc7ea1766b00cbe83a01612e46ad0ebb6dd1c93a862ebbbb669e439cbdd8e
+Grid                yes            1295      564     d9496f640565db5634a5c1e4b735874637409e6eb7c332b7d8c2414f45f10ff0
+Random graph        yes            715       160     67c3cee2bf966ec763c719895cf4ec28baf2aa92c54f3fa95fc14dd950a34e93
+Healing partition   yes            1397      249     44791f84c91d11ba9d448c02e4ea9f8cf74ac40db0c1ffbe77fca611e9fe8342
+Churn               yes            731       156     68571bf1408322983e6eb2ee43091f1aea953a80be03f97f832a1cbbda22ce5f
+Lossy link          yes            594       126     cb05fdf3bbf446a9955eb7538378e19bda4d2867c7d26aa30ac0f0f30bfd4554
+Crash and recover   yes            1815      273     1d133cfafe64b2636d84b7623f965edaec5ec8f08031c4e8b95867ddd0f72390
+Grow-only counter   yes            3832      666     ec4200cb887bf0682ee5a78fe212c133bcc10c13127d4bad6ec50dfae9a5ae4a
+```
+
+Other flags: `--json` emits machine-readable JSON, and `--no-trace` prints
+the summary only.
+
 ## Status model
 
 The control room shows a status pill. The status drives the run loop.
@@ -215,11 +298,11 @@ Run the full suite:
 mix test
 ```
 
-The suite has 67 tests. It covers the deterministic core, the counter CRDT,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers the engine GenServer and the LiveView. Tests never sleep and never read
-the wall clock. Each core test replays a scenario and asserts on the resulting
-state.
+The suite has 92 tests. It covers the deterministic core, the counter CRDT,
+the topology builder, the scenario codec, the scenario catalog, the headless
+replay tool, and the CLI. It also covers the engine GenServer and the
+LiveView. Tests never sleep and never read the wall clock. Each core test
+replays a scenario and asserts on the resulting state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -246,9 +329,10 @@ Later releases can build on this core without changing the model.
 - **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
 - **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
 - **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Headless replay tool.** Run a scenario from the CLI and print a trace.
+- **Headless replay tool.** Done. The CLI prints a full trace, a fingerprint, and a determinism check.
 - **Edge-level partitions.** Cut a single link instead of a node group.
 - **More CRDTs.** Add a grow-only set or an LWW register on top of the counter model.
+- **Trace export.** Write a replay trace to a file for byte-for-byte comparison.
 
 ## License
 
