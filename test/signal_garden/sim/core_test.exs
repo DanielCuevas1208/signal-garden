@@ -197,6 +197,26 @@ defmodule SignalGarden.Sim.CoreTest do
   end
 
   # ---------------------------------------------------------------------------
+  # construction
+  # ---------------------------------------------------------------------------
+
+  test "new/2 accepts a log_size option to capture a full trace" do
+    scenario = Scenarios.fetch(:ring)
+
+    default = Core.new(scenario)
+    assert default.log_size == 80
+
+    large = Core.new(scenario, log_size: 1000)
+    assert large.log_size == 1000
+
+    {default, _} = Core.step(default, 250)
+    {large, _} = Core.step(large, 250)
+
+    assert length(large.event_log) > length(default.event_log)
+    assert length(default.event_log) == 80
+  end
+
+  # ---------------------------------------------------------------------------
   # snapshot shape
   # ---------------------------------------------------------------------------
 

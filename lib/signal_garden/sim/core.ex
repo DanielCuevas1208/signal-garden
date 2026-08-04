@@ -108,8 +108,15 @@ defmodule SignalGarden.Sim.Core do
   # construction
   # ---------------------------------------------------------------------------
 
-  @doc "Build a fresh core state from a scenario struct."
-  def new(%SignalGarden.Sim.Scenario{} = scenario) do
+  @doc """
+  Build a fresh core state from a scenario struct.
+
+  The `:log_size` option caps the history and the event log. The default of
+  80 keeps the live control room lean. Pass a larger value to capture a full
+  event trace for a headless replay.
+  """
+  def new(%SignalGarden.Sim.Scenario{} = scenario, opts \\ []) do
+    log_size = Keyword.get(opts, :log_size, 80)
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
@@ -130,7 +137,7 @@ defmodule SignalGarden.Sim.Core do
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
       informed: initial_informed(scenario),
-      log_size: 80
+      log_size: log_size
     }
 
     state

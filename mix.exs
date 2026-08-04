@@ -4,14 +4,29 @@ defmodule SignalGarden.MixProject do
   def project do
     [
       app: :signal_garden,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      description: description(),
+      package: package(),
+      source_url: "https://github.com/DanielCuevas1208/signal-garden",
       aliases: aliases(),
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
+    ]
+  end
+
+  defp description do
+    "An interactive distributed-systems simulator that makes message delay, " <>
+      "partitions, retries, and eventual convergence visible and reproducible."
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"Source" => "https://github.com/DanielCuevas1208/signal-garden"}
     ]
   end
 
