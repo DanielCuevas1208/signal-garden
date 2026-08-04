@@ -1,0 +1,188 @@
+{
+  "delay_ms": [
+    25,
+    55
+  ],
+  "description": "Twelve nodes replicate an LWW map. Service statuses update on a schedule.",
+  "drop_prob": 0.05,
+  "fault_schedule": [
+    {
+      "action": "put",
+      "at": 400,
+      "key": "api",
+      "label": "Node 1 sets api operational",
+      "node": 1,
+      "value": "operational"
+    },
+    {
+      "action": "put",
+      "at": 900,
+      "key": "db",
+      "label": "Node 6 sets db degraded",
+      "node": 6,
+      "value": "degraded"
+    },
+    {
+      "action": "put",
+      "at": 1500,
+      "key": "queue",
+      "label": "Node 9 sets queue operational",
+      "node": 9,
+      "value": "operational"
+    },
+    {
+      "action": "put",
+      "at": 2200,
+      "key": "cache",
+      "label": "Node 4 sets cache down",
+      "node": 4,
+      "value": "down"
+    },
+    {
+      "action": "put",
+      "at": 2800,
+      "key": "db",
+      "label": "Node 1 sets db operational",
+      "node": 1,
+      "value": "operational"
+    }
+  ],
+  "format": 1,
+  "gossip_interval_ms": 70,
+  "id": "service_board",
+  "latest_value": 0,
+  "link_cuts": [],
+  "map_keys": [
+    "api",
+    "cache",
+    "db",
+    "queue"
+  ],
+  "mode": "map",
+  "name": "Service board",
+  "origin": 1,
+  "partitions": {},
+  "seed": 55,
+  "topology": {
+    "edges": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        2,
+        12
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        10,
+        11
+      ],
+      [
+        11,
+        12
+      ]
+    ],
+    "id": "random",
+    "label": "random 12/3",
+    "layout": {
+      "1": [
+        0.37867162918417885,
+        0.6438968437766939
+      ],
+      "10": [
+        0.6381776415062699,
+        0.415239152251937
+      ],
+      "11": [
+        0.4469972465754756,
+        0.1892290507579943
+      ],
+      "12": [
+        0.654511542045234,
+        0.33432933720391766
+      ],
+      "2": [
+        0.5202215366473985,
+        0.35585541378613356
+      ],
+      "3": [
+        0.5546843224991036,
+        0.7166186737762432
+      ],
+      "4": [
+        0.23397851808269493,
+        0.6636669966875431
+      ],
+      "5": [
+        0.3140060867630491,
+        0.6684225860041472
+      ],
+      "6": [
+        0.425736870800623,
+        0.21185051819097236
+      ],
+      "7": [
+        0.5108043285990711,
+        0.4162670760719659
+      ],
+      "8": [
+        0.4565048249758053,
+        0.33177278601286736
+      ],
+      "9": [
+        0.4601894471069338,
+        0.33233844443587585
+      ]
+    },
+    "nodes": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ]
+  }
+}

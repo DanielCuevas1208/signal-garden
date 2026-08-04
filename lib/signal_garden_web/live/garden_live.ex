@@ -36,6 +36,8 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:speed, 6)
       |> assign(:fault_node, snapshot.origin)
       |> assign(:fault_element, "")
+      |> assign(:map_keys, snapshot.map_keys)
+      |> assign(:fault_key, first_map_key(snapshot))
       |> assign(:link_edges, edge_options(snapshot))
       |> assign(:link_edge, first_edge_value(snapshot))
       |> assign(:show_import, false)
@@ -166,6 +168,20 @@ defmodule SignalGardenWeb.GardenLive do
     end
   end
 
+  def handle_event("select_map_key", %{"key" => key}, socket) do
+    {:noreply, assign(socket, :fault_key, key)}
+  end
+
+  def handle_event("put_field", %{"key" => key, "value" => value}, socket) do
+    with {:ok, key} <- normalize_map_key(key),
+         {:ok, value} <- normalize_map_value(value) do
+      Sim.put(socket.assigns.fault_node, key, value)
+      {:noreply, assign(socket, :fault_element, "")}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event("select_fault_node", %{"node" => node_id}, socket) do
     {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
   end
@@ -230,9 +246,45 @@ defmodule SignalGardenWeb.GardenLive do
     |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
     |> assign(:drop_value, round(snapshot.drop_prob * 100))
     |> assign(:fault_node, keep_node(socket.assigns.fault_node, snapshot))
+    |> assign(:map_keys, snapshot.map_keys)
+    |> assign(:fault_key, keep_key(socket.assigns.fault_key, snapshot))
     |> assign(:link_edges, edge_options(snapshot))
     |> assign(:link_edge, keep_edge(socket.assigns.link_edge, snapshot))
   end
+
+  defp keep_key(value, snapshot) do
+    if value in snapshot.map_keys do
+      value
+    else
+      first_map_key(snapshot)
+    end
+  end
+
+  defp first_map_key(snapshot) do
+    case snapshot.map_keys do
+      [key | _] -> key
+      [] -> ""
+    end
+  end
+
+  defp normalize_map_key(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> :error
+      key -> {:ok, key}
+    end
+  end
+
+  defp normalize_map_key(_), do: :error
+
+  defp normalize_map_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> :error
+      text -> {:ok, text}
+    end
+  end
+
+  defp normalize_map_value(value) when is_number(value), do: {:ok, value}
+  defp normalize_map_value(_), do: :error
 
   defp keep_node(value, snapshot) do
     if Enum.any?(snapshot.nodes, &(&1.id == value)) do

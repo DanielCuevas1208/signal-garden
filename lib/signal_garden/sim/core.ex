@@ -75,10 +75,18 @@ defmodule SignalGarden.Sim.Core do
   receiver keeps the value with the higher version, so the newest write wins
   everywhere. A node is informed when it holds the latest write. Convergence
   requires that every scheduled write has been issued.
+
+  The `:map` mode gossips a last-writer-wins map. Each node holds a map of
+  keys, where every key is an independent LWW register. A put action writes
+  one key on the writing node with a new version. On delivery the receiver
+  merges the maps per key, keeping the higher version for each key. Every
+  node converges to the same map, even when the network splits or drops
+  messages. A node is informed when it holds the latest write of every key.
+  Convergence requires that every scheduled write has been issued.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
-  @type mode :: :rumor | :counter | :set | :register
+  @type mode :: :rumor | :counter | :set | :register | :map
 
   @type event ::
           {:gossip, pos_integer()}
@@ -117,6 +125,8 @@ defmodule SignalGarden.Sim.Core do
     writes_issued: 0,
     writes_target: 0,
     register_value: nil,
+    map_fields: %{},
+    map_keys: [],
     rng: nil,
     informed: MapSet.new(),
     history: [],
@@ -159,6 +169,8 @@ defmodule SignalGarden.Sim.Core do
       writes_issued: 0,
       writes_target: scheduled_writes(scenario),
       register_value: nil,
+      map_fields: %{},
+      map_keys: scenario.map_keys,
       delay_ms: scenario.delay_ms,
       drop_prob: scenario.drop_prob,
       gossip_interval_ms: scenario.gossip_interval_ms,
@@ -175,7 +187,7 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp latest_for(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register],
+       when mode in [:counter, :set, :register, :map],
        do: %{value: 0, version: 0}
 
   defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
@@ -197,16 +209,17 @@ defmodule SignalGarden.Sim.Core do
 
   defp scheduled_adds(_scenario), do: 0
 
-  defp scheduled_writes(%SignalGarden.Sim.Scenario{mode: :register} = scenario) do
+  defp scheduled_writes(%SignalGarden.Sim.Scenario{mode: mode} = scenario)
+       when mode in [:register, :map] do
     Enum.count(scenario.fault_schedule, fn fault ->
-      match?({:write, _, _}, fault.action)
+      match?({:write, _, _}, fault.action) or match?({:put, _, _, _}, fault.action)
     end)
   end
 
   defp scheduled_writes(_scenario), do: 0
 
   defp initial_informed(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register],
+       when mode in [:counter, :set, :register, :map],
        do: MapSet.new()
 
   defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
@@ -226,6 +239,9 @@ defmodule SignalGarden.Sim.Core do
 
           :register ->
             %{origin => %{value: nil, version: 0}}
+
+          :map ->
+            %{origin => %{fields: %{}}}
 
           _ ->
             if id == origin do
@@ -345,6 +361,11 @@ defmodule SignalGarden.Sim.Core do
     apply_write(state, node, value, true)
   end
 
+  def command(%__MODULE__{mode: :map} = state, {:put, node, key, value})
+      when is_integer(node) and is_binary(key) and (is_binary(value) or is_number(value)) do
+    apply_put(state, node, key, value, true)
+  end
+
   def command(%__MODULE__{} = state, {:toggle_partition, node}) do
     current = Map.get(state.partitions, node, 0)
     next = if current == 0, do: 1, else: 0
@@ -402,6 +423,9 @@ defmodule SignalGarden.Sim.Core do
   defp empty_known(%__MODULE__{mode: :register, origin: origin}),
     do: %{origin => %{value: nil, version: 0}}
 
+  defp empty_known(%__MODULE__{mode: :map, origin: origin}),
+    do: %{origin => %{fields: %{}}}
+
   defp empty_known(%__MODULE__{origin: origin}),
     do: %{origin => %{version: 0, value: nil}}
 
@@ -455,6 +479,22 @@ defmodule SignalGarden.Sim.Core do
       kind: :wrote,
       from: node,
       to: nil,
+      value: value,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_put(%__MODULE__{} = state, node, key, value) do
+    entry = %{
+      t: state.clock,
+      kind: :put,
+      from: node,
+      to: nil,
+      key: key,
       value: value,
       partition: false
     }
@@ -519,6 +559,7 @@ defmodule SignalGarden.Sim.Core do
       :counter -> deliver_counter(state, to, payload)
       :set -> deliver_set(state, to, payload)
       :register -> deliver_register(state, to, payload)
+      :map -> deliver_map(state, to, payload)
       _ -> deliver_rumor(state, to, payload)
     end
   end
@@ -533,6 +574,10 @@ defmodule SignalGarden.Sim.Core do
 
   defp handle_event(%__MODULE__{} = state, {:fault, {:write, node, value}}) do
     apply_write(state, node, value, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:put, node, key, value}}) do
+    apply_put(state, node, key, value, false)
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, action}) do
@@ -620,6 +665,31 @@ defmodule SignalGarden.Sim.Core do
       state = %{state | nodes: nodes, delivered: state.delivered + 1}
       refresh_node_informed(state, to)
     end
+  end
+
+  defp deliver_map(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin]).fields
+      fields = merge_fields(current, payload.fields)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{fields: fields})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  # Merge two key maps per key, keeping the higher version for each key.
+  defp merge_fields(current, incoming) do
+    Enum.reduce(incoming, current, fn {key, field}, acc ->
+      case Map.fetch(acc, key) do
+        {:ok, existing} when existing.version >= field.version -> acc
+        _ -> Map.put(acc, key, field)
+      end
+    end)
   end
 
   defp forward_rumor(%__MODULE__{} = state, node) do
@@ -833,6 +903,51 @@ defmodule SignalGarden.Sim.Core do
   end
 
   # ---------------------------------------------------------------------------
+  # map mode (last-writer-wins map)
+  # ---------------------------------------------------------------------------
+
+  defp apply_put(%__MODULE__{mode: :map} = state, node, key, value, bump_target?) do
+    issued = state.writes_issued + 1
+    target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    field = %{value: value, version: issued}
+    map_fields = Map.put(state.map_fields, key, field)
+
+    state = %{
+      state
+      | writes_issued: issued,
+        writes_target: target,
+        map_fields: map_fields,
+        latest: %{value: map_size(map_fields), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin, :fields, key], field)
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_put(node, key, value)
+  end
+
+  defp map_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+    fields = get_in(node.known, [state.origin]).fields
+
+    node.up and
+      state.writes_issued >= state.writes_target and
+      Enum.all?(state.map_fields, fn {key, authoritative} ->
+        case Map.fetch(fields, key) do
+          {:ok, field} -> field.version >= authoritative.version
+          :error -> false
+        end
+      end)
+  end
+
+  # ---------------------------------------------------------------------------
   # convergence targets
   # ---------------------------------------------------------------------------
 
@@ -844,7 +959,7 @@ defmodule SignalGarden.Sim.Core do
     state.adds_issued >= state.adds_target
   end
 
-  defp fault_target_met?(%__MODULE__{mode: :register} = state) do
+  defp fault_target_met?(%__MODULE__{mode: mode} = state) when mode in [:register, :map] do
     state.writes_issued >= state.writes_target
   end
 
@@ -871,6 +986,9 @@ defmodule SignalGarden.Sim.Core do
 
   defp node_informed?(%__MODULE__{mode: :register} = state, node_id),
     do: register_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :map} = state, node_id),
+    do: map_informed?(state, node_id)
 
   defp node_informed?(%__MODULE__{nodes: nodes}, node_id), do: nodes[node_id].informed
 
@@ -1016,6 +1134,9 @@ defmodule SignalGarden.Sim.Core do
       set_elements: Enum.sort(MapSet.to_list(state.elements)),
       register_value: state.register_value,
       register_writes: state.writes_issued,
+      map_writes: state.writes_issued,
+      map_keys: map_key_options(state),
+      map_fields: snapshot_map_fields(state),
       delay_ms: state.delay_ms,
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
@@ -1061,6 +1182,17 @@ defmodule SignalGarden.Sim.Core do
     node.known[origin].version
   end
 
+  defp node_value(%__MODULE__{mode: :map} = state, node) do
+    fields = get_in(node.known, [state.origin]).fields
+
+    Enum.count(state.map_fields, fn {key, authoritative} ->
+      case Map.fetch(fields, key) do
+        {:ok, field} -> field.version >= authoritative.version
+        :error -> false
+      end
+    end)
+  end
+
   defp node_value(%__MODULE__{origin: origin}, node) do
     get_in(node, [Access.key(:known), origin, Access.key(:value)])
   end
@@ -1070,6 +1202,10 @@ defmodule SignalGarden.Sim.Core do
 
   defp node_version(%__MODULE__{mode: :register, origin: origin}, node) do
     node.known[origin].version
+  end
+
+  defp node_version(%__MODULE__{mode: :map, origin: origin}, node) do
+    map_size(get_in(node.known, [origin]).fields)
   end
 
   defp node_version(%__MODULE__{origin: origin}, node) do
@@ -1102,6 +1238,22 @@ defmodule SignalGarden.Sim.Core do
       description: scenario.description,
       seed: scenario.seed
     }
+  end
+
+  # The key universe for the control room: the keys a scenario declares plus
+  # every key written so far, so a new key shows up the moment it is written.
+  defp map_key_options(%__MODULE__{} = state) do
+    (state.scenario.map_keys ++ Map.keys(state.map_fields))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp snapshot_map_fields(%__MODULE__{} = state) do
+    state.map_fields
+    |> Enum.sort_by(fn {key, _field} -> key end)
+    |> Enum.map(fn {key, %{value: value, version: version}} ->
+      %{key: key, value: value, version: version}
+    end)
   end
 
   defp edge_key({a, b}), do: edge_key(a, b)

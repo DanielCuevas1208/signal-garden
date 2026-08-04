@@ -12,6 +12,7 @@ defmodule SignalGarden.Sim.Scenario do
     * `:counter` - a grow-only counter, grown by increment fault actions
     * `:set` - a grow-only set, grown by add fault actions
     * `:register` - a last-writer-wins register, written by write fault actions
+    * `:map` - a last-writer-wins map, written by put fault actions
 
   Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
   per node id and merges peer state with element-wise max. The counter total
@@ -25,6 +26,12 @@ defmodule SignalGarden.Sim.Scenario do
   value and the version of the write that produced it. On merge the receiver
   keeps the higher version, so the newest write wins everywhere. A status
   line or a banner spreads through the network and overwrites itself.
+
+  Map mode swaps the rumor for an LWW map CRDT. Each node keeps a map of
+  keys, where every key is an independent LWW register. On merge the receiver
+  keeps the higher version for each key, so the newest write wins per key. A
+  service board or a settings map spreads through the network and updates
+  itself one key at a time.
   """
 
   defstruct id: :line,
@@ -40,9 +47,10 @@ defmodule SignalGarden.Sim.Scenario do
             partitions: %{},
             link_cuts: [],
             fault_schedule: [],
+            map_keys: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter | :set | :register
+  @type mode :: :rumor | :counter | :set | :register | :map
 
   @type partition_change ::
           {:merge, :all}
@@ -55,6 +63,7 @@ defmodule SignalGarden.Sim.Scenario do
           | {:increment, pos_integer(), pos_integer()}
           | {:add, pos_integer(), binary() | number()}
           | {:write, pos_integer(), binary() | number()}
+          | {:put, pos_integer(), binary(), binary() | number()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 
@@ -72,6 +81,7 @@ defmodule SignalGarden.Sim.Scenario do
           partitions: %{pos_integer() => integer()},
           link_cuts: [{pos_integer(), pos_integer()}],
           fault_schedule: [fault()],
+          map_keys: [String.t()],
           mode: mode()
         }
 end

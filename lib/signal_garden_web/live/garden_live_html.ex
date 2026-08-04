@@ -148,6 +148,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :increment -> "text-violet-300"
       :added -> "text-fuchsia-300"
       :wrote -> "text-amber-300"
+      :put -> "text-cyan-300"
       _ -> "text-slate-300"
     end
   end
@@ -161,6 +162,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:increment), do: "wrote"
   def log_label(:added), do: "added"
   def log_label(:wrote), do: "posted"
+  def log_label(:put), do: "set"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -196,6 +198,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :register -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :map -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full map
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% _ -> %>
               {@snapshot.reached}/{@snapshot.total} nodes know the latest value
@@ -331,6 +336,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       {node.value}
                     </text>
                   <% end %>
+                  <%= if sg.mode == :map do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
+                    </text>
+                  <% end %>
                 </g>
               </g>
             </svg>
@@ -402,6 +416,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
   attr :fault_element, :string, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
   attr :link_edges, :list, required: true
   attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
@@ -419,6 +435,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         speed={@speed}
         fault_node={@fault_node}
         fault_element={@fault_element}
+        map_keys={@map_keys}
+        fault_key={@fault_key}
         link_edges={@link_edges}
         link_edge={@link_edge}
         show_import={@show_import}
@@ -438,6 +456,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
   attr :fault_element, :string, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
   attr :link_edges, :list, required: true
   attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
@@ -611,6 +631,34 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </.form>
         <% end %>
 
+        <%= if @snapshot.mode == :map do %>
+          <.form for={nil} id="sg-form-put" phx-submit="put_field" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <select
+                id="sg-map-key"
+                name="key"
+                phx-change="select_map_key"
+                class="sg-faults__select"
+                aria-label="Key to write to the map"
+              >
+                <%= for key <- @map_keys do %>
+                  <option value={key} selected={key == @fault_key}>{key}</option>
+                <% end %>
+              </select>
+              <input
+                id="sg-put-value"
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="status"
+                aria-label="Status to write for the selected key"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Set</button>
+            </div>
+          </.form>
+        <% end %>
+
         <p class="sg-faults__note">
           <%= case @snapshot.mode do %>
             <% :counter -> %>
@@ -619,6 +667,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               Pick a node, then add a member to its set or crash and restart it.
             <% :register -> %>
               Pick a node, then post a notice or crash and restart it.
+            <% :map -> %>
+              Pick a node, then set a service status or crash and restart it.
             <% _ -> %>
               Pick a node, then crash or restart it while the run is active.
           <% end %>
@@ -736,6 +786,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :map do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.map_writes}</dd>
+          </div>
+          <div>
+            <dt>Services</dt><dd>{length(@snapshot.map_fields)}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
@@ -756,6 +814,18 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         <div class="sg-set">
           <h3 class="sg-card__title">Current notice</h3>
           <p class="sg-register__value">{@snapshot.register_value}</p>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :map and @snapshot.map_fields != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Service status</h3>
+          <ul class="sg-map__list">
+            <li :for={field <- @snapshot.map_fields} class="sg-map__row">
+              <span class="sg-map__key">{field.key}</span>
+              <span class="sg-map__value">{field.value}</span>
+            </li>
+          </ul>
         </div>
       <% end %>
     </section>
@@ -784,6 +854,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       node {entry.from} added "{entry.element}"
                     <% entry.kind == :wrote -> %>
                       node {entry.from} posted "{entry.value}"
+                    <% entry.kind == :put -> %>
+                      node {entry.from} set {entry.key} = {entry.value}
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

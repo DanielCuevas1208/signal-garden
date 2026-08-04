@@ -29,7 +29,10 @@ defmodule SignalGarden.Sim.Replay do
           steps: non_neg_integer(),
           counter_total: non_neg_integer(),
           set_size: non_neg_integer(),
-          register_value: binary() | number() | nil
+          register_value: binary() | number() | nil,
+          map_writes: non_neg_integer(),
+          map_size: non_neg_integer(),
+          map_fields: [map()]
         }
 
   @type event :: map()
@@ -81,8 +84,19 @@ defmodule SignalGarden.Sim.Replay do
       steps: core.steps,
       counter_total: core.increments_total,
       set_size: MapSet.size(core.elements),
-      register_value: core.register_value
+      register_value: core.register_value,
+      map_writes: core.writes_issued,
+      map_size: map_size(core.map_fields),
+      map_fields: summarize_map_fields(core.map_fields)
     }
+  end
+
+  defp summarize_map_fields(fields) do
+    fields
+    |> Enum.sort_by(fn {key, _field} -> key end)
+    |> Enum.map(fn {key, %{value: value, version: version}} ->
+      %{key: key, value: value, version: version}
+    end)
   end
 
   @doc "Summaries for every catalog scenario, in catalog order."
@@ -118,7 +132,8 @@ defmodule SignalGarden.Sim.Replay do
       dropped: a.dropped == b.dropped,
       steps: a.steps == b.steps,
       history: a.history == b.history,
-      event_log: a.event_log == b.event_log
+      event_log: a.event_log == b.event_log,
+      map_fields: a.map_fields == b.map_fields
     }
   end
 
@@ -224,6 +239,7 @@ defmodule SignalGarden.Sim.Replay do
       :increment -> Map.put(base, :amount, entry.amount)
       :added -> Map.put(base, :element, entry.element)
       :wrote -> Map.put(base, :value, entry.value)
+      :put -> Map.merge(base, %{key: entry.key, value: entry.value})
       _ -> base
     end
   end

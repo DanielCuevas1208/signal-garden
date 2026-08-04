@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list bulletin imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list bulletin service_board imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -58,6 +58,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "partitions" => encode_partitions(scenario.partitions),
       "link_cuts" => encode_link_cuts(scenario.link_cuts),
       "fault_schedule" => Enum.map(scenario.fault_schedule, &encode_fault/1),
+      "map_keys" => scenario.map_keys,
       "mode" => Atom.to_string(scenario.mode),
       "topology" => encode_topology(scenario.topology)
     }
@@ -142,6 +143,17 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     }
   end
 
+  defp encode_fault(%{at: at, action: {:put, node, key, value}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "put",
+      "node" => node,
+      "key" => key,
+      "value" => value,
+      "label" => label
+    }
+  end
+
   defp encode_topology(%Topology{} = topology) do
     %{
       "id" => Atom.to_string(topology.id),
@@ -175,6 +187,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          {:ok, link_cuts} <- decode_link_cuts(map["link_cuts"] || []),
          :ok <- validate_link_cuts(topology, link_cuts),
          {:ok, fault_schedule} <- decode_fault_schedule(map["fault_schedule"] || []),
+         {:ok, map_keys} <- decode_map_keys(map["map_keys"]),
          {:ok, mode} <- decode_mode(map) do
       {:ok,
        %Scenario{
@@ -191,6 +204,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          partitions: partitions,
          link_cuts: link_cuts,
          fault_schedule: fault_schedule,
+         map_keys: map_keys,
          mode: mode
        }}
     end
@@ -330,13 +344,39 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     end
   end
 
+  defp decode_fault(
+         %{"at" => at, "action" => "put", "node" => node, "key" => key, "value" => value} = map
+       )
+       when is_integer(at) and is_integer(node) and is_binary(key) and
+              (is_binary(value) or is_number(value)) do
+    if String.trim(key) != "" and
+         ((is_binary(value) and String.trim(value) != "") or is_number(value)) do
+      {:ok, %{at: at, action: {:put, node, key, value}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
 
   defp decode_mode(%{"mode" => "counter"}), do: {:ok, :counter}
   defp decode_mode(%{"mode" => "set"}), do: {:ok, :set}
   defp decode_mode(%{"mode" => "register"}), do: {:ok, :register}
+  defp decode_mode(%{"mode" => "map"}), do: {:ok, :map}
   defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
   defp decode_mode(_), do: {:ok, :rumor}
+
+  defp decode_map_keys(nil), do: {:ok, []}
+
+  defp decode_map_keys(list) when is_list(list) do
+    if Enum.all?(list, &(is_binary(&1) and String.trim(&1) != "")) do
+      {:ok, Enum.uniq(list)}
+    else
+      {:error, {:invalid_field, "map_keys"}}
+    end
+  end
+
+  defp decode_map_keys(_), do: {:error, {:invalid_field, "map_keys"}}
 
   defp parse_id(nil), do: :imported
 

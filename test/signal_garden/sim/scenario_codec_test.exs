@@ -146,6 +146,31 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert state.register_value == "All systems nominal"
   end
 
+  test "the sample service board file loads and converges to the newest status per service" do
+    path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "service_board.json"])
+    json = File.read!(path)
+    assert {:ok, scenario} = ScenarioCodec.decode(json)
+    assert scenario.name == "Service board"
+    assert scenario.mode == :map
+    assert scenario.map_keys == ["api", "cache", "db", "queue"]
+
+    state =
+      scenario
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+
+    assert state.status == :converged
+    assert state.writes_issued == 5
+    assert state.map_fields["db"].value == "operational"
+    assert state.map_fields["api"].value == "operational"
+  end
+
   test "crash and restart faults round-trip through JSON" do
     scenario = Scenarios.crash()
     json = ScenarioCodec.encode(scenario)
@@ -205,6 +230,40 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert decoded.fault_schedule == scenario.fault_schedule
     assert {:write, 1, "System online"} in Enum.map(decoded.fault_schedule, & &1.action)
     assert decoded.id == :bulletin
+  end
+
+  test "map mode, put faults, and map_keys round-trip through JSON" do
+    scenario = Scenarios.service_board()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.mode == :map
+    assert decoded.map_keys == ["api", "cache", "db", "queue"]
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert {:put, 1, "api", "operational"} in Enum.map(decoded.fault_schedule, & &1.action)
+    assert decoded.id == :service_board
+  end
+
+  test "an exported map scenario replays to the same trace" do
+    scenario = Scenarios.service_board()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+    assert run.(scenario).map_fields == run.(decoded).map_fields
+    assert run.(scenario).event_log == run.(decoded).event_log
   end
 
   test "an exported register scenario replays to the same trace" do

@@ -24,7 +24,8 @@ defmodule SignalGarden.Scenarios do
       cut(),
       counter(),
       guest_list(),
-      bulletin()
+      bulletin(),
+      service_board()
     ]
   end
 
@@ -332,5 +333,59 @@ defmodule SignalGarden.Scenarios do
         }
       ]
     }
+  end
+
+  @doc """
+  A random graph that replicates a last-writer-wins map.
+
+  Five status updates overwrite services on a schedule. Each node keeps a map
+  of keys, where every key is an independent LWW register. On merge the
+  higher version wins per key, so every service converges to its newest
+  status, even when the network splits or drops messages.
+  """
+  def service_board do
+    topology = Topology.random(12, 3, 55)
+
+    fault_schedule = [
+      %{at: 400, action: {:put, 1, "api", "operational"}, label: "Node 1 sets api operational"},
+      %{at: 900, action: {:put, 6, "db", "degraded"}, label: "Node 6 sets db degraded"},
+      %{
+        at: 1500,
+        action: {:put, 9, "queue", "operational"},
+        label: "Node 9 sets queue operational"
+      },
+      %{at: 2200, action: {:put, 4, "cache", "down"}, label: "Node 4 sets cache down"},
+      %{at: 2800, action: {:put, 1, "db", "operational"}, label: "Node 1 sets db operational"}
+    ]
+
+    %Scenario{
+      id: :service_board,
+      name: "Service board",
+      description: "Twelve nodes replicate an LWW map. Service statuses update on a schedule.",
+      seed: 55,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {25, 55},
+      drop_prob: 0.05,
+      gossip_interval_ms: 70,
+      mode: :map,
+      map_keys: map_keys_from_schedule(fault_schedule),
+      fault_schedule: fault_schedule
+    }
+  end
+
+  # The key universe a map scenario publishes on, derived from its own writes
+  # so the scenario author never lists the same keys twice.
+  defp map_keys_from_schedule(schedule) do
+    schedule
+    |> Enum.flat_map(fn %{action: action} ->
+      case action do
+        {:put, _node, key, _value} -> [key]
+        _ -> []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 end

@@ -86,6 +86,9 @@ defmodule SignalGarden.Sim do
   @doc "Write a value to a node's register in register mode."
   def write(node, value), do: Engine.write(node, value)
 
+  @doc "Set a key to a value on a node's map in map mode."
+  def put(node, key, value), do: Engine.put(node, key, value)
+
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
 end

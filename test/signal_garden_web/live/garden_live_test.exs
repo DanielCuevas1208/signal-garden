@@ -179,6 +179,47 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.register_value == nil
   end
 
+  test "map mode shows the key picker and sets a service status", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "service_board"})
+
+    assert has_element?(view, "#sg-map-key")
+    assert has_element?(view, "#sg-put-value")
+    assert render(view) =~ "nodes hold the full map"
+    assert render(view) =~ "Services"
+
+    view
+    |> form("#sg-form-put", %{key: "api", value: "degraded"})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.map_writes == 1 end)
+    assert snapshot.mode == :map
+    assert snapshot.map_writes == 1
+    assert snapshot.map_fields == [%{key: "api", value: "degraded", version: 1}]
+    assert render(view) =~ "Service status"
+    assert render(view) =~ "api"
+    assert render(view) =~ "degraded"
+  end
+
+  test "an empty map value is ignored and keeps the run idle", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "service_board"})
+
+    view
+    |> form("#sg-form-put", %{key: "api", value: "   "})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.map_writes == 0 end)
+    assert snapshot.map_writes == 0
+    assert snapshot.map_fields == []
+  end
+
   test "link cut controls are present", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

@@ -59,6 +59,23 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "the Service board scenario converges to the newest status per service" do
+    scenario = Scenarios.fetch(:service_board)
+    state = await_converge(Core.new(scenario), 200_000)
+
+    assert state.status == :converged
+    assert state.writes_issued == 5
+    assert state.map_fields["db"].value == "operational"
+    assert state.map_fields["db"].version == 5
+
+    expected = state.map_fields
+
+    for node_id <- scenario.topology.nodes do
+      fields = get_in(state.nodes, [node_id, :known, state.origin]).fields
+      assert fields == expected, "node #{node_id} holds a stale service map"
+    end
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

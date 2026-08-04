@@ -50,6 +50,19 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert bulletin.register_value == "All systems nominal"
       assert bulletin.dropped > 0
     end
+
+    test "the service board scenario reports map mode and the converged map" do
+      board = Enum.find(Replay.summaries(), &(&1.id == :service_board))
+
+      assert board.mode == :map
+      assert board.map_writes == 5
+      assert board.map_size == 4
+      assert board.dropped > 0
+
+      db = Enum.find(board.map_fields, &(&1.key == "db"))
+      assert db.value == "operational"
+      assert db.version == 5
+    end
   end
 
   describe "run/1" do

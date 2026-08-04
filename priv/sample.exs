@@ -205,3 +205,28 @@ IO.puts(
 
 IO.puts("bulletin determinism: register value equal = #{i.register_value == j.register_value}")
 IO.puts("bulletin determinism: event_log equal       = #{i.event_log == j.event_log}")
+
+# Determinism check: the service board scenario must converge to the same map.
+board = fn ->
+  Scenarios.fetch(:service_board)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+k = board.()
+l = board.()
+
+IO.puts("board determinism: convergence_time equal  = #{k.convergence_time == l.convergence_time}")
+IO.puts("board determinism: map_fields equal        = #{k.map_fields == l.map_fields}")
+IO.puts("board determinism: event_log equal         = #{k.event_log == l.event_log}")

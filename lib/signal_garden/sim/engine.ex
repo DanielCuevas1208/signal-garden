@@ -74,6 +74,9 @@ defmodule SignalGarden.Sim.Engine do
   def write(node, value),
     do: GenServer.cast(__MODULE__, {:command, {:write, node, value}})
 
+  def put(node, key, value),
+    do: GenServer.cast(__MODULE__, {:command, {:put, node, key, value}})
+
   # ---------------------------------------------------------------------------
   # gen server callbacks
   # ---------------------------------------------------------------------------
