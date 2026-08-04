@@ -42,6 +42,14 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert guest.set_size == 5
       assert guest.dropped > 0
     end
+
+    test "the register scenario reports register mode and latest value" do
+      bulletin = Enum.find(Replay.summaries(), &(&1.id == :bulletin))
+
+      assert bulletin.mode == :register
+      assert bulletin.register_value == "All systems nominal"
+      assert bulletin.dropped > 0
+    end
   end
 
   describe "run/1" do

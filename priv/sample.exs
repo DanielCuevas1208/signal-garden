@@ -177,3 +177,31 @@ h = guest.()
 IO.puts("guest determinism: convergence_time equal = #{g.convergence_time == h.convergence_time}")
 IO.puts("guest determinism: elements equal        = #{g.elements == h.elements}")
 IO.puts("guest determinism: event_log equal        = #{g.event_log == h.event_log}")
+
+# Determinism check: the register scenario must converge to the same value.
+bulletin = fn ->
+  Scenarios.fetch(:bulletin)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+i = bulletin.()
+j = bulletin.()
+
+IO.puts(
+  "bulletin determinism: convergence_time equal = #{i.convergence_time == j.convergence_time}"
+)
+
+IO.puts("bulletin determinism: register value equal = #{i.register_value == j.register_value}")
+IO.puts("bulletin determinism: event_log equal       = #{i.event_log == j.event_log}")

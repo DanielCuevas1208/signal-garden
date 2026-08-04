@@ -11,6 +11,7 @@ defmodule SignalGarden.Sim.Scenario do
     * `:rumor` - a single value with a version, seeded by the origin node
     * `:counter` - a grow-only counter, grown by increment fault actions
     * `:set` - a grow-only set, grown by add fault actions
+    * `:register` - a last-writer-wins register, written by write fault actions
 
   Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
   per node id and merges peer state with element-wise max. The counter total
@@ -19,6 +20,11 @@ defmodule SignalGarden.Sim.Scenario do
   Set mode swaps the rumor for a G-Set CRDT. Each node keeps a set of elements
   and merges peer state with set union. Every node converges to the same
   collection, so a membership list or a tag cloud spreads through the network.
+
+  Register mode swaps the rumor for an LWW register CRDT. Each node keeps one
+  value and the version of the write that produced it. On merge the receiver
+  keeps the higher version, so the newest write wins everywhere. A status
+  line or a banner spreads through the network and overwrites itself.
   """
 
   defstruct id: :line,
@@ -36,7 +42,7 @@ defmodule SignalGarden.Sim.Scenario do
             fault_schedule: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter | :set
+  @type mode :: :rumor | :counter | :set | :register
 
   @type partition_change ::
           {:merge, :all}
@@ -48,6 +54,7 @@ defmodule SignalGarden.Sim.Scenario do
           | {:restart, pos_integer()}
           | {:increment, pos_integer(), pos_integer()}
           | {:add, pos_integer(), binary() | number()}
+          | {:write, pos_integer(), binary() | number()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 

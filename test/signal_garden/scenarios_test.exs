@@ -44,6 +44,21 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "the Bulletin board scenario converges to the last notice" do
+    scenario = Scenarios.fetch(:bulletin)
+    state = await_converge(Core.new(scenario), 200_000)
+
+    assert state.status == :converged
+    assert state.writes_issued == 5
+    assert state.register_value == "All systems nominal"
+
+    for node_id <- scenario.topology.nodes do
+      known = get_in(state.nodes, [node_id, :known, state.origin])
+      assert known.value == "All systems nominal", "node #{node_id} holds an old notice"
+      assert known.version == 5, "node #{node_id} holds an old version"
+    end
+  end
+
   defp await_converge(state, budget) do
     state = Core.command(state, {:set_status, :running})
 

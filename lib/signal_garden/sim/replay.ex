@@ -28,7 +28,8 @@ defmodule SignalGarden.Sim.Replay do
           dropped: non_neg_integer(),
           steps: non_neg_integer(),
           counter_total: non_neg_integer(),
-          set_size: non_neg_integer()
+          set_size: non_neg_integer(),
+          register_value: binary() | number() | nil
         }
 
   @type event :: map()
@@ -79,7 +80,8 @@ defmodule SignalGarden.Sim.Replay do
       dropped: core.dropped,
       steps: core.steps,
       counter_total: core.increments_total,
-      set_size: MapSet.size(core.elements)
+      set_size: MapSet.size(core.elements),
+      register_value: core.register_value
     }
   end
 
@@ -221,6 +223,7 @@ defmodule SignalGarden.Sim.Replay do
     case kind do
       :increment -> Map.put(base, :amount, entry.amount)
       :added -> Map.put(base, :element, entry.element)
+      :wrote -> Map.put(base, :value, entry.value)
       _ -> base
     end
   end

@@ -23,7 +23,8 @@ defmodule SignalGarden.Scenarios do
       crash(),
       cut(),
       counter(),
-      guest_list()
+      guest_list(),
+      bulletin()
     ]
   end
 
@@ -288,6 +289,47 @@ defmodule SignalGarden.Scenarios do
         %{at: 1500, action: {:add, 9, "Alan"}, label: "Node 9 adds Alan"},
         %{at: 2200, action: {:add, 4, "Edsger"}, label: "Node 4 adds Edsger"},
         %{at: 2800, action: {:add, 1, "Barbara"}, label: "Node 1 adds Barbara"}
+      ]
+    }
+  end
+
+  @doc """
+  A random graph that replicates a last-writer-wins register.
+
+  Five notices overwrite the register on a schedule. Each node keeps one value
+  and the version of the write that produced it. On merge the higher version
+  wins, so the newest notice replaces every older one, even when the network
+  splits or drops messages.
+  """
+  def bulletin do
+    topology = Topology.random(12, 3, 44)
+
+    %Scenario{
+      id: :bulletin,
+      name: "Bulletin board",
+      description: "Twelve nodes replicate an LWW register. Notices overwrite on a schedule.",
+      seed: 44,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {25, 55},
+      drop_prob: 0.05,
+      gossip_interval_ms: 70,
+      mode: :register,
+      fault_schedule: [
+        %{at: 400, action: {:write, 1, "System online"}, label: "Node 1 posts System online"},
+        %{at: 900, action: {:write, 6, "Deploy started"}, label: "Node 6 posts Deploy started"},
+        %{
+          at: 1500,
+          action: {:write, 9, "Queue backed up"},
+          label: "Node 9 posts Queue backed up"
+        },
+        %{at: 2200, action: {:write, 4, "Queue drained"}, label: "Node 4 posts Queue drained"},
+        %{
+          at: 2800,
+          action: {:write, 1, "All systems nominal"},
+          label: "Node 1 posts All systems nominal"
+        }
       ]
     }
   end

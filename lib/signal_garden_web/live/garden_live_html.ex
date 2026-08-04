@@ -147,6 +147,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
       :added -> "text-fuchsia-300"
+      :wrote -> "text-amber-300"
       _ -> "text-slate-300"
     end
   end
@@ -159,6 +160,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
   def log_label(:added), do: "added"
+  def log_label(:wrote), do: "posted"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -191,6 +193,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :set -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the full set
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% _ -> %>
               {@snapshot.reached}/{@snapshot.total} nodes know the latest value
@@ -317,7 +322,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
-                  <%= if sg.mode in [:counter, :set] do %>
+                  <%= if sg.mode in [:counter, :set, :register] do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
@@ -589,12 +594,31 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </.form>
         <% end %>
 
+        <%= if @snapshot.mode == :register do %>
+          <.form for={nil} id="sg-form-write" phx-submit="publish_value" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-write-value"
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="notice text"
+                aria-label="Value to write to the register"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Publish</button>
+            </div>
+          </.form>
+        <% end %>
+
         <p class="sg-faults__note">
           <%= case @snapshot.mode do %>
             <% :counter -> %>
               Pick a node, then write to its counter cell or crash and restart it.
             <% :set -> %>
               Pick a node, then add a member to its set or crash and restart it.
+            <% :register -> %>
+              Pick a node, then post a notice or crash and restart it.
             <% _ -> %>
               Pick a node, then crash or restart it while the run is active.
           <% end %>
@@ -707,6 +731,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Elements</dt><dd>{@snapshot.set_size}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
@@ -720,6 +749,13 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               {element}
             </li>
           </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :register and @snapshot.register_value != nil do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current notice</h3>
+          <p class="sg-register__value">{@snapshot.register_value}</p>
         </div>
       <% end %>
     </section>
@@ -746,6 +782,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       node {entry.from} wrote +{entry.amount}
                     <% entry.kind == :added -> %>
                       node {entry.from} added "{entry.element}"
+                    <% entry.kind == :wrote -> %>
+                      node {entry.from} posted "{entry.value}"
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

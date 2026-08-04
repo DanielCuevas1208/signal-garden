@@ -155,6 +155,17 @@ defmodule SignalGardenWeb.GardenLive do
     end
   end
 
+  def handle_event("publish_value", %{"value" => value}, socket) do
+    case normalize_element(value) do
+      nil ->
+        {:noreply, socket}
+
+      text ->
+        Sim.write(socket.assigns.fault_node, text)
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
   def handle_event("select_fault_node", %{"node" => node_id}, socket) do
     {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
   end

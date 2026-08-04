@@ -140,6 +140,45 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.set_size == 0
   end
 
+  test "register mode shows the publish control and writes a value", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "bulletin"})
+
+    assert has_element?(view, "#sg-write-value")
+    assert render(view) =~ "nodes hold the latest notice"
+    assert render(view) =~ "Writes"
+
+    view
+    |> form("#sg-form-write", %{value: "Manual notice"})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.register_writes == 1 end)
+    assert snapshot.mode == :register
+    assert snapshot.register_writes == 1
+    assert snapshot.register_value == "Manual notice"
+    assert render(view) =~ "Current notice"
+    assert render(view) =~ "Manual notice"
+  end
+
+  test "an empty register write is ignored and keeps the run idle", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "bulletin"})
+
+    view
+    |> form("#sg-form-write", %{value: "   "})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.register_writes == 0 end)
+    assert snapshot.register_writes == 0
+    assert snapshot.register_value == nil
+  end
+
   test "link cut controls are present", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

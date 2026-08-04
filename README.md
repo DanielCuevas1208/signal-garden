@@ -15,9 +15,10 @@ the same fault on another machine.
 - Logical time that has no link to the wall clock.
 - Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
-- Three gossip payloads: a rumor, a grow-only counter, and a grow-only set.
+- Four gossip payloads: a rumor, a grow-only counter, a grow-only set, and a register.
 - A grow-only counter (G-Counter) that converges across the network.
 - A grow-only set (G-Set) that spreads a collection across the network.
+- A last-writer-wins register (LWW register) where the newest write wins.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 - A headless replay tool that reproduces any run from the CLI.
@@ -85,11 +86,12 @@ heal that link. Drag the sliders to change delay, loss rate, and speed. Pick a
 scenario from the list to load a new run.
 
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
-the box to write to a node. In set mode, use the box to add a member. Use
-**Export JSON** to download the active scenario. Use **Import JSON** to paste a
-file and load it into the control room. Sample files ship at
-`priv/scenarios/ring.json`, `priv/scenarios/counter.json`, and
-`priv/scenarios/set.json`.
+the box to write to a node. In set mode, use the box to add a member. In
+register mode, use the box to post a notice. Use **Export JSON** to download
+the active scenario. Use **Import JSON** to paste a file and load it into the
+control room. Sample files ship at `priv/scenarios/ring.json`,
+`priv/scenarios/counter.json`, `priv/scenarios/set.json`, and
+`priv/scenarios/register.json`.
 
 ## Scenario files
 
@@ -109,7 +111,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with eleven runs. Each one fixes a topology, a
+The scenario catalog ships with twelve runs. Each one fixes a topology, a
 seed, and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -125,6 +127,7 @@ seed, and a set of network conditions.
 | Broken link | 12 | two links are cut, then healed |
 | Grow-only counter | 12 | five writes climb a G-Counter on a schedule |
 | Guest list | 12 | five names join a G-Set on a schedule |
+| Bulletin board | 12 | five notices overwrite an LWW register on a schedule |
 
 ## Link cuts
 
@@ -185,6 +188,29 @@ Convergence needs every scheduled add to be issued. The run re-arms when you
 add after it converged, so you can watch the new member spread. A manual add
 survives only the current run. A duplicate add leaves the set unchanged.
 
+## Registers and CRDTs
+
+The **Bulletin board** scenario swaps the rumor for an LWW register. This is
+the classic last-writer-wins register from the CRDT family. It shows how one
+value converges while the network keeps losing and reordering messages.
+
+Each node holds one value and the version of the write that produced it. A
+write action puts a new value on the writing node with a new version. A gossip
+message carries the sender's value and version. On delivery the receiver keeps
+the value with the higher version, so the newest write wins everywhere. Every
+node converges to the same value, even when the network splits or drops
+messages.
+
+The control room shows the write version above each node. The **Current
+notice** card shows the latest value text. The **Publish** box in the Node
+fault panel writes a notice to the selected node. The convergence chart tracks
+how many nodes hold the latest version.
+
+Convergence needs every scheduled write to be issued. The run re-arms when you
+post after it converged, so you can watch the new notice spread. A manual
+write survives only the current run. A write with the same text still moves
+the version forward, because the version, not the text, decides the winner.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
@@ -204,6 +230,7 @@ Crash and recover   12     converged    1815      269    24        540
 Broken link         12     converged    2822      382    45        809
 Grow-only counter   12     converged    3832      617    44        1281
 Guest list          12     converged    3638      603    21        1228
+Bulletin board      12     converged    3688      601    36        1239
 ```
 
 The determinism check confirms the core is reproducible:
@@ -222,6 +249,9 @@ counter determinism: event_log equal      = true
 guest determinism: convergence_time equal = true
 guest determinism: elements equal        = true
 guest determinism: event_log equal        = true
+bulletin determinism: convergence_time equal = true
+bulletin determinism: register value equal = true
+bulletin determinism: event_log equal       = true
 ```
 
 Reproduce this output from a checkout with:
@@ -277,6 +307,9 @@ separated the origin from the rest of the network.
 In counter mode, **Converged** means every node holds the final counter total.
 The run cannot converge before every scheduled write is issued.
 
+In register mode, **Converged** means every node holds the latest write. The
+run cannot converge before every scheduled notice is posted.
+
 ## Crash and restart
 
 A crash takes a node out of service. The node stops gossiping and forgets what
@@ -304,11 +337,12 @@ Run the full suite:
 mix test
 ```
 
-The suite has 125 tests. It covers the deterministic core, the counter CRDT,
-the set CRDT, the topology builder, the scenario codec, and the scenario
-catalog. It also covers link cuts, the engine GenServer, the LiveView, and the
-headless replay tool. Tests never sleep and never read the wall clock. Each
-core test replays a scenario and asserts on the resulting state.
+The suite has 146 tests. It covers the deterministic core, the counter CRDT,
+the set CRDT, the register CRDT, the topology builder, the scenario codec, and
+the scenario catalog. It also covers link cuts, the engine GenServer, the
+LiveView, and the headless replay tool. Tests never sleep and never read the
+wall clock. Each core test replays a scenario and asserts on the resulting
+state.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -325,6 +359,7 @@ mix precommit
 - The engine runs one scenario at a time inside a single GenServer.
 - The counter payload is a G-Counter. It only grows; it cannot be decremented.
 - The set payload is a G-Set. Elements join; they cannot leave.
+- The register payload is an LWW register. The newest write wins; history is not kept.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
@@ -340,7 +375,8 @@ Later releases can build on this core without changing the model.
 - **Sets and CRDTs.** Done. A G-Set spreads a collection through the network with scheduled and manual adds.
 - **Headless replay tool.** Done. The `mix signal_garden.replay` task prints summaries, traces, and determinism checks from the CLI.
 - **Edge-level partitions.** Done. Cut and heal single links from the graph, the fault box, or a scenario file.
-- **More CRDTs.** Add an LWW register or a last-writer-wins map on top of the set model.
+- **Registers and CRDTs.** Done. The rumor now has an LWW register sibling with scheduled and manual writes.
+- **More CRDTs.** Add an LWW map or an OR-set on top of the register model.
 
 ## License
 
