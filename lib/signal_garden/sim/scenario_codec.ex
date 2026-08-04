@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -56,7 +56,9 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       "drop_prob" => scenario.drop_prob,
       "gossip_interval_ms" => scenario.gossip_interval_ms,
       "partitions" => encode_partitions(scenario.partitions),
+      "link_cuts" => encode_link_cuts(scenario.link_cuts),
       "fault_schedule" => Enum.map(scenario.fault_schedule, &encode_fault/1),
+      "map_keys" => scenario.map_keys,
       "mode" => Atom.to_string(scenario.mode),
       "topology" => encode_topology(scenario.topology)
     }
@@ -69,6 +71,24 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     partitions
     |> Enum.sort_by(fn {k, _} -> k end)
     |> Map.new(fn {k, v} -> {Integer.to_string(k), v} end)
+  end
+
+  defp encode_link_cuts(cuts) do
+    cuts
+    |> Enum.sort()
+    |> Enum.map(fn {a, b} -> [a, b] end)
+  end
+
+  defp encode_fault(%{at: at, action: {:cut, {a, b}}, label: label}) do
+    %{"at" => at, "action" => "cut_link", "a" => a, "b" => b, "label" => label}
+  end
+
+  defp encode_fault(%{at: at, action: {:cut_link, {a, b}}, label: label}) do
+    %{"at" => at, "action" => "cut_link", "a" => a, "b" => b, "label" => label}
+  end
+
+  defp encode_fault(%{at: at, action: {:heal_link, {a, b}}, label: label}) do
+    %{"at" => at, "action" => "heal_link", "a" => a, "b" => b, "label" => label}
   end
 
   defp encode_fault(%{at: at, action: {:merge, :all}, label: label}) do
@@ -103,6 +123,47 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     }
   end
 
+  defp encode_fault(%{at: at, action: {:add, node, element}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "add",
+      "node" => node,
+      "element" => element,
+      "label" => label
+    }
+  end
+
+  defp encode_fault(%{at: at, action: {:remove, node, element}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "remove",
+      "node" => node,
+      "element" => element,
+      "label" => label
+    }
+  end
+
+  defp encode_fault(%{at: at, action: {:write, node, value}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "write",
+      "node" => node,
+      "value" => value,
+      "label" => label
+    }
+  end
+
+  defp encode_fault(%{at: at, action: {:put, node, key, value}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "put",
+      "node" => node,
+      "key" => key,
+      "value" => value,
+      "label" => label
+    }
+  end
+
   defp encode_topology(%Topology{} = topology) do
     %{
       "id" => Atom.to_string(topology.id),
@@ -133,7 +194,10 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          {:ok, gossip_interval_ms} <-
            require_pos_int(map["gossip_interval_ms"], "gossip_interval_ms"),
          {:ok, partitions} <- decode_partitions_result(map["partitions"] || %{}),
+         {:ok, link_cuts} <- decode_link_cuts(map["link_cuts"] || []),
+         :ok <- validate_link_cuts(topology, link_cuts),
          {:ok, fault_schedule} <- decode_fault_schedule(map["fault_schedule"] || []),
+         {:ok, map_keys} <- decode_map_keys(map["map_keys"]),
          {:ok, mode} <- decode_mode(map) do
       {:ok,
        %Scenario{
@@ -148,7 +212,9 @@ defmodule SignalGarden.Sim.ScenarioCodec do
          drop_prob: drop_prob,
          gossip_interval_ms: gossip_interval_ms,
          partitions: partitions,
+         link_cuts: link_cuts,
          fault_schedule: fault_schedule,
+         map_keys: map_keys,
          mode: mode
        }}
     end
@@ -176,6 +242,28 @@ defmodule SignalGarden.Sim.ScenarioCodec do
       end
     end)
   end
+
+  defp decode_link_cuts(list) when is_list(list) do
+    Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
+      case parse_link_cut(item) do
+        {:ok, {a, b} = cut} ->
+          {:cont, {:ok, [if(a <= b, do: cut, else: {b, a}) | acc]}}
+
+        {:error, _} = err ->
+          {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, cuts} -> {:ok, Enum.reverse(cuts)}
+      other -> other
+    end
+  end
+
+  defp decode_link_cuts(_), do: {:error, {:invalid_field, "link_cuts"}}
+
+  defp parse_link_cut([a, b]) when is_integer(a) and is_integer(b), do: {:ok, {a, b}}
+  defp parse_link_cut({a, b}) when is_integer(a) and is_integer(b), do: {:ok, {a, b}}
+  defp parse_link_cut(_), do: {:error, {:invalid_field, "link_cuts"}}
 
   defp decode_fault_schedule(list) when is_list(list) do
     Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
@@ -205,6 +293,28 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     {:ok, %{at: at, action: {:assign, node, group}, label: label}}
   end
 
+  defp decode_fault(%{
+         "at" => at,
+         "action" => "cut_link",
+         "a" => a,
+         "b" => b,
+         "label" => label
+       })
+       when is_integer(at) and is_integer(a) and is_integer(b) do
+    {:ok, %{at: at, action: {:cut, {a, b}}, label: label}}
+  end
+
+  defp decode_fault(%{
+         "at" => at,
+         "action" => "heal_link",
+         "a" => a,
+         "b" => b,
+         "label" => label
+       })
+       when is_integer(at) and is_integer(a) and is_integer(b) do
+    {:ok, %{at: at, action: {:heal_link, {a, b}}, label: label}}
+  end
+
   defp decode_fault(%{"at" => at, "action" => "crash", "node" => node, "label" => label})
        when is_integer(at) and is_integer(node) do
     {:ok, %{at: at, action: {:crash, node}, label: label}}
@@ -226,11 +336,70 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     end
   end
 
+  defp decode_fault(%{"at" => at, "action" => "add", "node" => node, "element" => element} = map)
+       when is_integer(at) and is_integer(node) and (is_binary(element) or is_number(element)) do
+    if String.trim(element) != "" do
+      {:ok, %{at: at, action: {:add, node, element}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
+  defp decode_fault(
+         %{"at" => at, "action" => "remove", "node" => node, "element" => element} = map
+       )
+       when is_integer(at) and is_integer(node) and (is_binary(element) or is_number(element)) do
+    if String.trim(element) != "" do
+      {:ok, %{at: at, action: {:remove, node, element}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
+  defp decode_fault(%{"at" => at, "action" => "write", "node" => node, "value" => value} = map)
+       when is_integer(at) and is_integer(node) and (is_binary(value) or is_number(value)) do
+    if (is_binary(value) and String.trim(value) != "") or is_number(value) do
+      {:ok, %{at: at, action: {:write, node, value}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
+  defp decode_fault(
+         %{"at" => at, "action" => "put", "node" => node, "key" => key, "value" => value} = map
+       )
+       when is_integer(at) and is_integer(node) and is_binary(key) and
+              (is_binary(value) or is_number(value)) do
+    if String.trim(key) != "" and
+         ((is_binary(value) and String.trim(value) != "") or is_number(value)) do
+      {:ok, %{at: at, action: {:put, node, key, value}, label: map["label"]}}
+    else
+      {:error, {:invalid_field, "fault_schedule"}}
+    end
+  end
+
   defp decode_fault(_), do: {:error, {:invalid_field, "fault_schedule"}}
 
   defp decode_mode(%{"mode" => "counter"}), do: {:ok, :counter}
+  defp decode_mode(%{"mode" => "set"}), do: {:ok, :set}
+  defp decode_mode(%{"mode" => "orset"}), do: {:ok, :orset}
+  defp decode_mode(%{"mode" => "register"}), do: {:ok, :register}
+  defp decode_mode(%{"mode" => "mv_register"}), do: {:ok, :mv_register}
+  defp decode_mode(%{"mode" => "map"}), do: {:ok, :map}
   defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
   defp decode_mode(_), do: {:ok, :rumor}
+
+  defp decode_map_keys(nil), do: {:ok, []}
+
+  defp decode_map_keys(list) when is_list(list) do
+    if Enum.all?(list, &(is_binary(&1) and String.trim(&1) != "")) do
+      {:ok, Enum.uniq(list)}
+    else
+      {:error, {:invalid_field, "map_keys"}}
+    end
+  end
+
+  defp decode_map_keys(_), do: {:error, {:invalid_field, "map_keys"}}
 
   defp parse_id(nil), do: :imported
 
@@ -254,6 +423,14 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   defp validate_origin(%Topology{nodes: nodes}, origin) do
     if origin in nodes, do: :ok, else: {:error, {:invalid_origin, origin}}
+  end
+
+  defp validate_link_cuts(%Topology{nodes: nodes}, cuts) do
+    if Enum.all?(cuts, fn {a, b} -> a in nodes and b in nodes end) do
+      :ok
+    else
+      {:error, {:invalid_field, "link_cuts"}}
+    end
   end
 
   defp require_string(value, _field) when is_binary(value), do: {:ok, value}

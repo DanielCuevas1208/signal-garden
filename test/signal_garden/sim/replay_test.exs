@@ -34,6 +34,46 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert counter.counter_total == 9
       assert counter.dropped > 0
     end
+
+    test "the set scenario reports set mode and element count" do
+      guest = Enum.find(Replay.summaries(), &(&1.id == :guest_list))
+
+      assert guest.mode == :set
+      assert guest.set_size == 5
+      assert guest.dropped > 0
+    end
+
+    test "the roster scenario reports orset mode and the surviving members" do
+      roster = Enum.find(Replay.summaries(), &(&1.id == :roster))
+
+      assert roster.mode == :orset
+      assert roster.orset_adds == 4
+      assert roster.orset_removes == 2
+      assert roster.orset_size == 2
+      assert roster.orset_elements == ["Alan", "Edsger"]
+      assert roster.dropped > 0
+    end
+
+    test "the register scenario reports register mode and latest value" do
+      bulletin = Enum.find(Replay.summaries(), &(&1.id == :bulletin))
+
+      assert bulletin.mode == :register
+      assert bulletin.register_value == "All systems nominal"
+      assert bulletin.dropped > 0
+    end
+
+    test "the service board scenario reports map mode and the converged map" do
+      board = Enum.find(Replay.summaries(), &(&1.id == :service_board))
+
+      assert board.mode == :map
+      assert board.map_writes == 5
+      assert board.map_size == 4
+      assert board.dropped > 0
+
+      db = Enum.find(board.map_fields, &(&1.key == "db"))
+      assert db.value == "operational"
+      assert db.version == 5
+    end
   end
 
   describe "run/1" do
@@ -86,6 +126,15 @@ defmodule SignalGarden.Sim.ReplayTest do
       trace = Replay.event_trace(:line)
 
       assert Enum.any?(trace, &(&1.kind == :deliver))
+    end
+
+    test "marks dropped events caused by a cut link" do
+      trace = Replay.event_trace(:cut)
+
+      cut_drop = Enum.find(trace, &(&1.kind == :dropped_cut))
+      assert cut_drop != nil
+      assert cut_drop.cut == true
+      assert cut_drop.to != nil
     end
   end
 

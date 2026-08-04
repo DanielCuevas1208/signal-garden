@@ -35,6 +35,11 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
       |> assign(:speed, 6)
       |> assign(:fault_node, snapshot.origin)
+      |> assign(:fault_element, "")
+      |> assign(:map_keys, snapshot.map_keys)
+      |> assign(:fault_key, first_map_key(snapshot))
+      |> assign(:link_edges, edge_options(snapshot))
+      |> assign(:link_edge, first_edge_value(snapshot))
       |> assign(:show_import, false)
       |> assign(:import_json, "")
 
@@ -105,6 +110,27 @@ defmodule SignalGardenWeb.GardenLive do
     {:noreply, socket}
   end
 
+  def handle_event("toggle_link_cut", %{"a" => a, "b" => b}, socket) do
+    Sim.toggle_link_cut(parse_int(a, 1), parse_int(b, 1))
+    {:noreply, socket}
+  end
+
+  def handle_event("select_link_edge", %{"edge" => edge}, socket) do
+    {:noreply, assign(socket, :link_edge, edge)}
+  end
+
+  def handle_event("cut_link", %{"edge" => edge}, socket) do
+    {a, b} = parse_edge(edge)
+    Sim.cut_link(a, b)
+    {:noreply, socket}
+  end
+
+  def handle_event("heal_link", %{"edge" => edge}, socket) do
+    {a, b} = parse_edge(edge)
+    Sim.heal_link(a, b)
+    {:noreply, socket}
+  end
+
   def handle_event("crash", %{"node" => node_id}, socket) do
     Sim.crash(parse_int(node_id, 1))
     {:noreply, socket}
@@ -118,6 +144,57 @@ defmodule SignalGardenWeb.GardenLive do
   def handle_event("increment", %{"node" => node_id}, socket) do
     Sim.increment(parse_int(node_id, 1))
     {:noreply, socket}
+  end
+
+  def handle_event("add_element", %{"element" => element}, socket) do
+    case normalize_element(element) do
+      nil ->
+        {:noreply, socket}
+
+      value ->
+        Sim.add(socket.assigns.fault_node, value)
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
+  def handle_event("orset_op", %{"op" => op, "element" => element}, socket) do
+    case normalize_element(element) do
+      nil ->
+        {:noreply, socket}
+
+      value ->
+        case op do
+          "remove" -> Sim.remove(socket.assigns.fault_node, value)
+          _ -> Sim.add(socket.assigns.fault_node, value)
+        end
+
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
+  def handle_event("publish_value", %{"value" => value}, socket) do
+    case normalize_element(value) do
+      nil ->
+        {:noreply, socket}
+
+      text ->
+        Sim.write(socket.assigns.fault_node, text)
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
+  def handle_event("select_map_key", %{"key" => key}, socket) do
+    {:noreply, assign(socket, :fault_key, key)}
+  end
+
+  def handle_event("put_field", %{"key" => key, "value" => value}, socket) do
+    with {:ok, key} <- normalize_map_key(key),
+         {:ok, value} <- normalize_map_value(value) do
+      Sim.put(socket.assigns.fault_node, key, value)
+      {:noreply, assign(socket, :fault_element, "")}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   def handle_event("select_fault_node", %{"node" => node_id}, socket) do
@@ -183,10 +260,106 @@ defmodule SignalGardenWeb.GardenLive do
     |> assign(:selected_scenario, snapshot.scenario.id)
     |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
     |> assign(:drop_value, round(snapshot.drop_prob * 100))
+    |> assign(:fault_node, keep_node(socket.assigns.fault_node, snapshot))
+    |> assign(:map_keys, snapshot.map_keys)
+    |> assign(:fault_key, keep_key(socket.assigns.fault_key, snapshot))
+    |> assign(:link_edges, edge_options(snapshot))
+    |> assign(:link_edge, keep_edge(socket.assigns.link_edge, snapshot))
   end
+
+  defp keep_key(value, snapshot) do
+    if value in snapshot.map_keys do
+      value
+    else
+      first_map_key(snapshot)
+    end
+  end
+
+  defp first_map_key(snapshot) do
+    case snapshot.map_keys do
+      [key | _] -> key
+      [] -> ""
+    end
+  end
+
+  defp normalize_map_key(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> :error
+      key -> {:ok, key}
+    end
+  end
+
+  defp normalize_map_key(_), do: :error
+
+  defp normalize_map_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> :error
+      text -> {:ok, text}
+    end
+  end
+
+  defp normalize_map_value(value) when is_number(value), do: {:ok, value}
+  defp normalize_map_value(_), do: :error
+
+  defp keep_node(value, snapshot) do
+    if Enum.any?(snapshot.nodes, &(&1.id == value)) do
+      value
+    else
+      snapshot.origin
+    end
+  end
+
+  defp normalize_element(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      element -> element
+    end
+  end
+
+  defp normalize_element(_), do: nil
 
   defp delay_to_form({_lo, hi}), do: hi
   defp delay_to_form(value) when is_integer(value), do: value
+
+  defp edge_options(snapshot) do
+    Enum.map(snapshot.edges, fn edge ->
+      %{value: edge_value(edge), label: edge_label(edge)}
+    end)
+  end
+
+  defp edge_value(%{a: a, b: b}), do: "#{a}-#{b}"
+
+  defp edge_label(%{a: a, b: b, cut: cut}) do
+    "#{a} - #{b}#{if cut, do: " (cut)", else: ""}"
+  end
+
+  defp first_edge_value(snapshot) do
+    case snapshot.edges do
+      [edge | _] -> edge_value(edge)
+      [] -> "1-2"
+    end
+  end
+
+  defp keep_edge(value, snapshot) do
+    if Enum.any?(snapshot.edges, &(edge_value(&1) == value)) do
+      value
+    else
+      first_edge_value(snapshot)
+    end
+  end
+
+  defp parse_edge("") do
+    {1, 2}
+  end
+
+  defp parse_edge(value) when is_binary(value) do
+    case String.split(value, "-", parts: 2) do
+      [a, b] -> {parse_int(a, 1), parse_int(b, 1)}
+      _ -> {1, 2}
+    end
+  end
+
+  defp parse_edge(_), do: {1, 2}
 
   defp parse_int(value, default) when is_binary(value) do
     case Integer.parse(value) do

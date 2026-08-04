@@ -15,11 +15,16 @@ defmodule SignalGarden.Sim.Core do
 
   On a gossip tick a node chooses one neighbour, copies its own knowledge to
   that neighbour through a message, and reschedules the next tick. The
-  network applies three hazards between send and deliver:
+  network applies four hazards between send and deliver:
 
     * delay - the message lands later in logical time
+    * cut link - a broken edge drops every message that crosses it
     * partition - a message that crosses a partition boundary is dropped
     * loss - a fair die roll drops a fixed fraction of messages
+
+  A link cut is an edge-level fault. It breaks one link between two nodes in
+  both directions, while a group partition splits the whole network. Cut a
+  link to isolate a node or to slow a path. Heal it to restore the edge.
 
   A node can also crash. A crashed node stops gossiping, forgets what it
   knew, and drops the deliveries that arrive while it is down. Restarting
@@ -44,7 +49,7 @@ defmodule SignalGarden.Sim.Core do
 
   ## Modes
 
-  A scenario runs in one of two modes.
+  A scenario selects one of seven payload modes.
 
   The `:rumor` mode (the default) gossips one value with a version. The origin
   node seeds the value, and a node becomes informed when it holds that exact
@@ -56,14 +61,49 @@ defmodule SignalGarden.Sim.Core do
   with element-wise max, so every node converges to the same total. A node is
   informed when its own total equals the total of all increments issued so far.
   Convergence requires that every scheduled increment has been issued.
+
+  The `:set` mode gossips a grow-only set. Each node holds a set of elements.
+  An add action puts one element into the set of the writing node, and a
+  message carries the sender's whole set. On delivery the receiver merges with
+  set union, so every node converges to the same collection. A node is
+  informed when its set contains every element added so far. Convergence
+  requires that every scheduled add has been issued.
+
+  The `:orset` mode gossips an observed-remove set. Each node stores every
+  element with two tag sets: the tags added and the tags removed. An add
+  action creates a fresh, unique tag for the element. A remove action moves
+  every tag of the element into the removed set. On delivery the receiver
+  merges both tag sets per element, so no stale add can resurrect a removed
+  member. A node is informed when its membership equals the authoritative
+  roster, and convergence requires that every scheduled add and remove has
+  been issued.
+
+  The `:register` mode gossips a last-writer-wins register. Each node holds
+  one value and the version of the write that produced it. A write action
+  puts a new value on the writing node with a new version. On delivery the
+  receiver keeps the value with the higher version, so the newest write wins
+  everywhere. A node is informed when it holds the latest write. Convergence
+  requires that every scheduled write has been issued.
+
+  The `:map` mode gossips a last-writer-wins map. Each node holds a map of
+  keys, where every key is an independent LWW register. A put action writes
+  one key on the writing node with a new version. On delivery the receiver
+  merges the maps per key, keeping the higher version for each key. Every
+  node converges to the same map, even when the network splits or drops
+  messages. A node is informed when it holds the latest write of every key.
+  Convergence requires that every scheduled write has been issued.
+
+  The `:mv_register` mode gossips a multi-value register. Each write carries
+  the dots it has observed. Concurrent writes remain visible as separate
+  values. A later write removes the values its writer has seen.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
-  @type mode :: :rumor | :counter
+  @type mode :: :rumor | :counter | :set | :register | :map | :orset | :mv_register
 
   @type event ::
           {:gossip, pos_integer()}
-          | {:deliver, pos_integer(), %{version: non_neg_integer(), value: number()}}
+          | {:deliver, pos_integer(), map()}
           | {:fault, term()}
 
   @type state :: %__MODULE__{}
@@ -81,6 +121,7 @@ defmodule SignalGarden.Sim.Core do
     seq: 0,
     clock: 0,
     partitions: %{},
+    link_cuts: MapSet.new(),
     delay_ms: {35, 70},
     drop_prob: 0.0,
     gossip_interval_ms: 90,
@@ -90,6 +131,26 @@ defmodule SignalGarden.Sim.Core do
     increments_issued: 0,
     increments_total: 0,
     increment_target: 0,
+    adds_issued: 0,
+    adds_total: 0,
+    adds_target: 0,
+    elements: MapSet.new(),
+    orset_ops_issued: 0,
+    orset_ops_target: 0,
+    orset_adds_issued: 0,
+    orset_removes_issued: 0,
+    orset_elements: MapSet.new(),
+    # The authoritative union keeps concurrent operations separate from replica knowledge.
+    orset_target_store: %{},
+    orset_tag_counters: %{},
+    writes_issued: 0,
+    writes_target: 0,
+    register_value: nil,
+    mv_entries: %{},
+    mv_context: MapSet.new(),
+    mv_tag_counters: %{},
+    map_fields: %{},
+    map_keys: [],
     rng: nil,
     informed: MapSet.new(),
     history: [],
@@ -125,10 +186,27 @@ defmodule SignalGarden.Sim.Core do
       increments_issued: 0,
       increments_total: 0,
       increment_target: scheduled_increments(scenario),
+      adds_issued: 0,
+      adds_total: 0,
+      adds_target: scheduled_adds(scenario),
+      elements: MapSet.new(),
+      orset_ops_issued: 0,
+      orset_ops_target: scheduled_orset_ops(scenario),
+      orset_adds_issued: 0,
+      orset_removes_issued: 0,
+      orset_elements: MapSet.new(),
+      orset_target_store: %{},
+      orset_tag_counters: %{},
+      writes_issued: 0,
+      writes_target: scheduled_writes(scenario),
+      register_value: nil,
+      map_fields: %{},
+      map_keys: scenario.map_keys,
       delay_ms: scenario.delay_ms,
       drop_prob: scenario.drop_prob,
       gossip_interval_ms: scenario.gossip_interval_ms,
       partitions: Map.new(scenario.partitions),
+      link_cuts: MapSet.new(scenario.link_cuts, &edge_key/1),
       informed: initial_informed(scenario),
       log_size: 80
     }
@@ -139,7 +217,9 @@ defmodule SignalGarden.Sim.Core do
     |> record_history()
   end
 
-  defp latest_for(%SignalGarden.Sim.Scenario{mode: :counter}), do: %{value: 0, version: 0}
+  defp latest_for(%SignalGarden.Sim.Scenario{mode: mode})
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
+       do: %{value: 0, version: 0}
 
   defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
     do: %{value: value, version: 1}
@@ -152,7 +232,34 @@ defmodule SignalGarden.Sim.Core do
 
   defp scheduled_increments(_scenario), do: 0
 
-  defp initial_informed(%SignalGarden.Sim.Scenario{mode: :counter}), do: MapSet.new()
+  defp scheduled_adds(%SignalGarden.Sim.Scenario{mode: :set} = scenario) do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:add, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_adds(_scenario), do: 0
+
+  defp scheduled_orset_ops(%SignalGarden.Sim.Scenario{mode: :orset} = scenario) do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:add, _, _}, fault.action) or match?({:remove, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_orset_ops(_scenario), do: 0
+
+  defp scheduled_writes(%SignalGarden.Sim.Scenario{mode: mode} = scenario)
+       when mode in [:register, :map, :mv_register] do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:write, _, _}, fault.action) or match?({:put, _, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_writes(_scenario), do: 0
+
+  defp initial_informed(%SignalGarden.Sim.Scenario{mode: mode})
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
+       do: MapSet.new()
 
   defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
     do: MapSet.new([origin])
@@ -165,6 +272,21 @@ defmodule SignalGarden.Sim.Core do
         case scenario.mode do
           :counter ->
             %{origin => %{cells: %{}}}
+
+          :set ->
+            %{origin => %{elements: MapSet.new()}}
+
+          :orset ->
+            %{origin => %{store: %{}}}
+
+          :register ->
+            %{origin => %{value: nil, version: 0}}
+
+          :mv_register ->
+            %{origin => %{entries: %{}, context: MapSet.new()}}
+
+          :map ->
+            %{origin => %{fields: %{}}}
 
           _ ->
             if id == origin do
@@ -234,7 +356,31 @@ defmodule SignalGarden.Sim.Core do
   end
 
   def command(%__MODULE__{} = state, {:merge, :all}) do
-    %{state | partitions: %{}}
+    %{state | partitions: %{}, link_cuts: MapSet.new()}
+  end
+
+  def command(%__MODULE__{} = state, {:cut, {a, b}}) when is_integer(a) and is_integer(b) do
+    %{state | link_cuts: MapSet.put(state.link_cuts, edge_key(a, b))}
+  end
+
+  def command(%__MODULE__{} = state, {:cut_link, {a, b}}) when is_integer(a) and is_integer(b) do
+    command(state, {:cut, {a, b}})
+  end
+
+  def command(%__MODULE__{} = state, {:heal_link, {a, b}}) when is_integer(a) and is_integer(b) do
+    %{state | link_cuts: MapSet.delete(state.link_cuts, edge_key(a, b))}
+  end
+
+  def command(%__MODULE__{} = state, {:toggle_link_cut, {a, b}})
+      when is_integer(a) and is_integer(b) do
+    key = edge_key(a, b)
+
+    cuts =
+      if MapSet.member?(state.link_cuts, key),
+        do: MapSet.delete(state.link_cuts, key),
+        else: MapSet.put(state.link_cuts, key)
+
+    %{state | link_cuts: cuts}
   end
 
   def command(%__MODULE__{} = state, {:crash, node}) when is_integer(node) do
@@ -248,6 +394,32 @@ defmodule SignalGarden.Sim.Core do
   def command(%__MODULE__{mode: :counter} = state, {:increment, node, amount})
       when is_integer(node) and is_integer(amount) and amount > 0 do
     apply_increment(state, node, amount, true)
+  end
+
+  def command(%__MODULE__{mode: :set} = state, {:add, node, element})
+      when is_integer(node) and (is_binary(element) or is_number(element)) do
+    apply_add(state, node, element, true)
+  end
+
+  def command(%__MODULE__{mode: :orset} = state, {:add, node, element})
+      when is_integer(node) and (is_binary(element) or is_number(element)) do
+    apply_orset_add(state, node, element, true)
+  end
+
+  def command(%__MODULE__{mode: :orset} = state, {:remove, node, element})
+      when is_integer(node) and (is_binary(element) or is_number(element)) do
+    apply_orset_remove(state, node, element, true)
+  end
+
+  def command(%__MODULE__{mode: mode} = state, {:write, node, value})
+      when mode in [:register, :mv_register] and
+             is_integer(node) and (is_binary(value) or is_number(value)) do
+    apply_write(state, node, value, true)
+  end
+
+  def command(%__MODULE__{mode: :map} = state, {:put, node, key, value})
+      when is_integer(node) and is_binary(key) and (is_binary(value) or is_number(value)) do
+    apply_put(state, node, key, value, true)
   end
 
   def command(%__MODULE__{} = state, {:toggle_partition, node}) do
@@ -301,6 +473,21 @@ defmodule SignalGarden.Sim.Core do
   defp empty_known(%__MODULE__{mode: :counter, origin: origin}),
     do: %{origin => %{cells: %{}}}
 
+  defp empty_known(%__MODULE__{mode: :set, origin: origin}),
+    do: %{origin => %{elements: MapSet.new()}}
+
+  defp empty_known(%__MODULE__{mode: :orset, origin: origin}),
+    do: %{origin => %{store: %{}}}
+
+  defp empty_known(%__MODULE__{mode: :register, origin: origin}),
+    do: %{origin => %{value: nil, version: 0}}
+
+  defp empty_known(%__MODULE__{mode: :mv_register, origin: origin}),
+    do: %{origin => %{entries: %{}, context: MapSet.new()}}
+
+  defp empty_known(%__MODULE__{mode: :map, origin: origin}),
+    do: %{origin => %{fields: %{}}}
+
   defp empty_known(%__MODULE__{origin: origin}),
     do: %{origin => %{version: 0, value: nil}}
 
@@ -325,6 +512,67 @@ defmodule SignalGarden.Sim.Core do
       from: node,
       to: nil,
       amount: amount,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_add(%__MODULE__{} = state, node, element) do
+    entry = %{
+      t: state.clock,
+      kind: :added,
+      from: node,
+      to: nil,
+      element: element,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_remove(%__MODULE__{} = state, node, element) do
+    entry = %{
+      t: state.clock,
+      kind: :removed,
+      from: node,
+      to: nil,
+      element: element,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_write(%__MODULE__{} = state, node, value) do
+    entry = %{
+      t: state.clock,
+      kind: :wrote,
+      from: node,
+      to: nil,
+      value: value,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
+  defp log_put(%__MODULE__{} = state, node, key, value) do
+    entry = %{
+      t: state.clock,
+      kind: :put,
+      from: node,
+      to: nil,
+      key: key,
+      value: value,
       partition: false
     }
 
@@ -386,12 +634,33 @@ defmodule SignalGarden.Sim.Core do
   defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
     case state.mode do
       :counter -> deliver_counter(state, to, payload)
+      :set -> deliver_set(state, to, payload)
+      :orset -> deliver_orset(state, to, payload)
+      :register -> deliver_register(state, to, payload)
+      :mv_register -> deliver_mv_register(state, to, payload)
+      :map -> deliver_map(state, to, payload)
       _ -> deliver_rumor(state, to, payload)
     end
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, {:increment, node, amount}}) do
     apply_increment(state, node, amount, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:add, node, element}}) do
+    apply_add(state, node, element, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:remove, node, element}}) do
+    apply_orset_remove(state, node, element, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:write, node, value}}) do
+    apply_write(state, node, value, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:put, node, key, value}}) do
+    apply_put(state, node, key, value, false)
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, action}) do
@@ -445,6 +714,114 @@ defmodule SignalGarden.Sim.Core do
     end
   end
 
+  defp deliver_set(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      elements = MapSet.union(current.elements, payload.elements)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{elements: elements})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_orset(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      store = merge_orset_store(current.store, payload.store)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{store: store})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_register(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+
+      next =
+        if payload.version > current.version do
+          %{value: payload.value, version: payload.version}
+        else
+          current
+        end
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], next)
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_mv_register(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      next = SignalGarden.Sim.MultiValueRegister.merge(current, payload)
+      nodes = put_in(state.nodes, [to, :known, state.origin], next)
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_map(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin]).fields
+      fields = merge_fields(current, payload.fields)
+
+      nodes = put_in(state.nodes, [to, :known, state.origin], %{fields: fields})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  # Merge two key maps per key, keeping the higher version for each key.
+  defp merge_fields(current, incoming) do
+    Enum.reduce(incoming, current, fn {key, field}, acc ->
+      case Map.fetch(acc, key) do
+        {:ok, existing} when existing.version >= field.version -> acc
+        _ -> Map.put(acc, key, field)
+      end
+    end)
+  end
+
+  # Merge two OR-set stores per element, keeping the union of the added tags
+  # and the union of the removed tags. A removed tag stays removed forever, so
+  # a stale add message can never bring a removed member back.
+  defp merge_orset_store(current, incoming) do
+    Enum.reduce(incoming, current, fn {element, incoming_tags}, acc ->
+      case Map.fetch(acc, element) do
+        {:ok, existing} ->
+          Map.put(acc, element, %{
+            adds: MapSet.union(existing.adds, incoming_tags.adds),
+            removes: MapSet.union(existing.removes, incoming_tags.removes)
+          })
+
+        :error ->
+          Map.put(acc, element, incoming_tags)
+      end
+    end)
+  end
+
   defp forward_rumor(%__MODULE__{} = state, node) do
     case pick_neighbour(node, state.rng) do
       {nil, _rng} ->
@@ -459,6 +836,7 @@ defmodule SignalGarden.Sim.Core do
     payload = get_in(state.nodes, [from, :known, state.origin])
     key = edge_key(from, to)
     same_partition = same_partition?(state.partitions, from, to)
+    cut = MapSet.member?(state.link_cuts, key)
 
     {survives, rng} =
       if state.drop_prob > 0.0 do
@@ -470,6 +848,12 @@ defmodule SignalGarden.Sim.Core do
     state = %{state | rng: rng}
 
     cond do
+      cut ->
+        state
+        |> Map.put(:dropped, state.dropped + 1)
+        |> log_event(:dropped_cut, from, to, cut: true)
+        |> tap_edge(key, :cut)
+
       not same_partition ->
         state
         |> Map.put(:dropped, state.dropped + 1)
@@ -509,7 +893,7 @@ defmodule SignalGarden.Sim.Core do
       state.convergence_time != nil ->
         state
 
-      reached >= total and total > 0 and counter_done?(state) ->
+      reached >= total and total > 0 and fault_target_met?(state) ->
         %{state | status: :converged, convergence_time: state.clock}
 
       true ->
@@ -574,14 +958,316 @@ defmodule SignalGarden.Sim.Core do
       counter_total(node, state.origin) == state.increments_total
   end
 
-  defp counter_done?(%__MODULE__{mode: :counter} = state) do
+  # ---------------------------------------------------------------------------
+  # set mode (grow-only set)
+  # ---------------------------------------------------------------------------
+
+  # The set-mode add handler also drives the orset mode, so a scheduled add
+  # fault applies to either payload.
+  defp apply_add(%__MODULE__{mode: :orset} = state, node, element, bump_target?) do
+    apply_orset_add(state, node, element, bump_target?)
+  end
+
+  defp apply_add(%__MODULE__{mode: :set} = state, node, element, bump_target?) do
+    issued = state.adds_issued + 1
+    elements = MapSet.put(state.elements, element)
+    target = if bump_target?, do: state.adds_target + 1, else: state.adds_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | adds_issued: issued,
+        adds_total: MapSet.size(elements),
+        adds_target: target,
+        elements: elements,
+        latest: %{value: MapSet.size(elements), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{elements: elements})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_add(node, element)
+  end
+
+  defp set_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+
+    node.up and
+      state.adds_issued >= state.adds_target and
+      MapSet.size(node.known[state.origin].elements) == MapSet.size(state.elements)
+  end
+
+  # ---------------------------------------------------------------------------
+  # orset mode (observed-remove set)
+  # ---------------------------------------------------------------------------
+
+  defp apply_orset_add(%__MODULE__{mode: :orset} = state, node, element, bump_target?) do
+    tag = next_orset_tag(state, node)
+    store = get_in(state.nodes, [node, :known, state.origin]).store
+
+    existing = Map.get(store, element, %{adds: MapSet.new(), removes: MapSet.new()})
+    tags = %{existing | adds: MapSet.put(existing.adds, tag)}
+    store = Map.put(store, element, tags)
+
+    target_store = merge_orset_store(state.orset_target_store, store)
+    elements = orset_membership(target_store)
+
+    ops_issued = state.orset_ops_issued + 1
+    adds_issued = state.orset_adds_issued + 1
+    target = if bump_target?, do: state.orset_ops_target + 1, else: state.orset_ops_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | orset_ops_issued: ops_issued,
+        orset_ops_target: target,
+        orset_adds_issued: adds_issued,
+        orset_target_store: target_store,
+        orset_elements: elements,
+        orset_tag_counters: Map.put(state.orset_tag_counters, node, elem(tag, 1)),
+        latest: %{value: MapSet.size(elements), version: ops_issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{store: store})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_add(node, element)
+  end
+
+  defp apply_orset_remove(%__MODULE__{mode: :orset} = state, node, element, bump_target?) do
+    store = get_in(state.nodes, [node, :known, state.origin]).store
+
+    tags =
+      case Map.fetch(store, element) do
+        {:ok, %{adds: adds, removes: removes}} ->
+          %{adds: MapSet.new(), removes: MapSet.union(removes, adds)}
+
+        :error ->
+          %{adds: MapSet.new(), removes: MapSet.new()}
+      end
+
+    store = Map.put(store, element, tags)
+
+    target_store = merge_orset_store(state.orset_target_store, store)
+    elements = orset_membership(target_store)
+
+    ops_issued = state.orset_ops_issued + 1
+    removes_issued = state.orset_removes_issued + 1
+    target = if bump_target?, do: state.orset_ops_target + 1, else: state.orset_ops_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | orset_ops_issued: ops_issued,
+        orset_ops_target: target,
+        orset_removes_issued: removes_issued,
+        orset_target_store: target_store,
+        orset_elements: elements,
+        latest: %{value: MapSet.size(elements), version: ops_issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{store: store})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_remove(node, element)
+  end
+
+  # Every add creates a globally unique tag from the writing node's own
+  # counter, so no two replicas ever mint the same tag.
+  defp next_orset_tag(%__MODULE__{} = state, node) do
+    {node, Map.get(state.orset_tag_counters, node, 0) + 1}
+  end
+
+  defp orset_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+
+    node.up and
+      state.orset_ops_issued >= state.orset_ops_target and
+      orset_membership(node.known[state.origin].store) == state.orset_elements
+  end
+
+  # A member is present when it still owns at least one tag that no remove has
+  # moved into the removed set.
+  defp orset_membership(store) do
+    store
+    |> Enum.filter(fn {_element, %{adds: adds, removes: removes}} ->
+      MapSet.difference(adds, removes) != MapSet.new()
+    end)
+    |> Enum.map(fn {element, _tags} -> element end)
+    |> MapSet.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # register mode (last-writer-wins register)
+  # ---------------------------------------------------------------------------
+
+  defp apply_write(%__MODULE__{mode: :mv_register} = state, node, value, bump_target?) do
+    apply_mv_write(state, node, value, bump_target?)
+  end
+
+  defp apply_write(%__MODULE__{mode: :register} = state, node, value, bump_target?) do
+    issued = state.writes_issued + 1
+    target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | writes_issued: issued,
+        writes_target: target,
+        register_value: value,
+        latest: %{value: value, version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], %{value: value, version: issued})
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_write(node, value)
+  end
+
+  defp apply_mv_write(%__MODULE__{mode: :mv_register} = state, node, value, bump_target?) do
+    issued = state.writes_issued + 1
+    target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
+    sequence = Map.get(state.mv_tag_counters, node, 0) + 1
+    dot = {node, sequence}
+    current = get_in(state.nodes, [node, :known, state.origin])
+    next = SignalGarden.Sim.MultiValueRegister.write(current, dot, value)
+
+    target_state =
+      SignalGarden.Sim.MultiValueRegister.merge(
+        %{entries: state.mv_entries, context: state.mv_context},
+        next
+      )
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | writes_issued: issued,
+        writes_target: target,
+        mv_entries: target_state.entries,
+        mv_context: target_state.context,
+        mv_tag_counters: Map.put(state.mv_tag_counters, node, sequence),
+        latest: %{value: map_size(target_state.entries), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], next)
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_write(node, value)
+  end
+
+  defp register_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+
+    node.up and
+      state.writes_issued >= state.writes_target and
+      get_in(node.known, [state.origin]).version == state.writes_issued
+  end
+
+  defp mv_register_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+    known = get_in(node.known, [state.origin])
+    target = %{entries: state.mv_entries, context: state.mv_context}
+
+    node.up and
+      state.writes_issued >= state.writes_target and
+      known == target
+  end
+
+  # ---------------------------------------------------------------------------
+  # map mode (last-writer-wins map)
+  # ---------------------------------------------------------------------------
+
+  defp apply_put(%__MODULE__{mode: :map} = state, node, key, value, bump_target?) do
+    issued = state.writes_issued + 1
+    target = if bump_target?, do: state.writes_target + 1, else: state.writes_target
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    field = %{value: value, version: issued}
+    map_fields = Map.put(state.map_fields, key, field)
+
+    state = %{
+      state
+      | writes_issued: issued,
+        writes_target: target,
+        map_fields: map_fields,
+        latest: %{value: map_size(map_fields), version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin, :fields, key], field)
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_put(node, key, value)
+  end
+
+  defp map_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+    fields = get_in(node.known, [state.origin]).fields
+
+    node.up and
+      state.writes_issued >= state.writes_target and
+      Enum.all?(state.map_fields, fn {key, authoritative} ->
+        case Map.fetch(fields, key) do
+          {:ok, field} -> field.version >= authoritative.version
+          :error -> false
+        end
+      end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # convergence targets
+  # ---------------------------------------------------------------------------
+
+  defp fault_target_met?(%__MODULE__{mode: :counter} = state) do
     state.increments_issued >= state.increment_target
   end
 
-  defp counter_done?(_state), do: true
+  defp fault_target_met?(%__MODULE__{mode: :set} = state) do
+    state.adds_issued >= state.adds_target
+  end
+
+  defp fault_target_met?(%__MODULE__{mode: :orset} = state) do
+    state.orset_ops_issued >= state.orset_ops_target
+  end
+
+  defp fault_target_met?(%__MODULE__{mode: mode} = state)
+       when mode in [:register, :map, :mv_register] do
+    state.writes_issued >= state.writes_target
+  end
+
+  defp fault_target_met?(_state), do: true
 
   defp refresh_node_informed(%__MODULE__{} = state, node_id) do
-    informed? = counter_informed?(state, node_id)
+    informed? = node_informed?(state, node_id)
 
     nodes = put_in(state.nodes, [node_id, :informed], informed?)
 
@@ -592,6 +1278,26 @@ defmodule SignalGarden.Sim.Core do
 
     %{state | nodes: nodes, informed: informed}
   end
+
+  defp node_informed?(%__MODULE__{mode: :counter} = state, node_id),
+    do: counter_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :set} = state, node_id),
+    do: set_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :orset} = state, node_id),
+    do: orset_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :register} = state, node_id),
+    do: register_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :mv_register} = state, node_id),
+    do: mv_register_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :map} = state, node_id),
+    do: map_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{nodes: nodes}, node_id), do: nodes[node_id].informed
 
   defp refresh_all_informed(%__MODULE__{} = state) do
     Enum.reduce(state.topology.nodes, state, fn node_id, acc ->
@@ -623,7 +1329,7 @@ defmodule SignalGarden.Sim.Core do
     %{state | history: history, steps: state.steps + 1}
   end
 
-  defp log_event(%__MODULE__{} = state, kind, from, to) do
+  defp log_event(%__MODULE__{} = state, kind, from, to, extra \\ []) do
     entry = %{
       t: state.clock,
       kind: kind,
@@ -631,6 +1337,8 @@ defmodule SignalGarden.Sim.Core do
       to: to,
       partition: Map.get(state.partitions, from, 0) != Map.get(state.partitions, to, 0)
     }
+
+    entry = Map.merge(entry, Map.new(extra))
 
     log = [entry | state.event_log]
     log = Enum.take(log, state.log_size)
@@ -728,10 +1436,32 @@ defmodule SignalGarden.Sim.Core do
       mode: state.mode,
       counter_total: state.increments_total,
       counter_writes: state.increments_issued,
+      set_size: MapSet.size(state.elements),
+      set_adds: state.adds_issued,
+      set_elements: Enum.sort(MapSet.to_list(state.elements)),
+      orset_ops: state.orset_ops_issued,
+      orset_adds: state.orset_adds_issued,
+      orset_removes: state.orset_removes_issued,
+      orset_size: MapSet.size(state.orset_elements),
+      orset_elements: Enum.sort(MapSet.to_list(state.orset_elements)),
+      register_value: state.register_value,
+      register_writes: state.writes_issued,
+      mv_writes: state.writes_issued,
+      mv_conflicts: map_size(state.mv_entries),
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: state.mv_entries,
+          context: state.mv_context
+        }),
+      mv_entries: snapshot_mv_entries(state),
+      map_writes: state.writes_issued,
+      map_keys: map_key_options(state),
+      map_fields: snapshot_map_fields(state),
       delay_ms: state.delay_ms,
       drop_prob: state.drop_prob,
       gossip_interval_ms: state.gossip_interval_ms,
       partitions: state.partitions,
+      link_cuts: MapSet.to_list(state.link_cuts),
       nodes: snapshot_nodes(state),
       edges: snapshot_edges(state),
       history: state.history,
@@ -764,11 +1494,52 @@ defmodule SignalGarden.Sim.Core do
     Enum.sum(Map.values(node.known[origin].cells))
   end
 
+  defp node_value(%__MODULE__{mode: :set, origin: origin}, node) do
+    MapSet.size(node.known[origin].elements)
+  end
+
+  defp node_value(%__MODULE__{mode: :orset, origin: origin}, node) do
+    MapSet.size(orset_membership(node.known[origin].store))
+  end
+
+  defp node_value(%__MODULE__{mode: :register, origin: origin}, node) do
+    node.known[origin].version
+  end
+
+  defp node_value(%__MODULE__{mode: :mv_register, origin: origin}, node) do
+    map_size(node.known[origin].entries)
+  end
+
+  defp node_value(%__MODULE__{mode: :map} = state, node) do
+    fields = get_in(node.known, [state.origin]).fields
+
+    Enum.count(state.map_fields, fn {key, authoritative} ->
+      case Map.fetch(fields, key) do
+        {:ok, field} -> field.version >= authoritative.version
+        :error -> false
+      end
+    end)
+  end
+
   defp node_value(%__MODULE__{origin: origin}, node) do
     get_in(node, [Access.key(:known), origin, Access.key(:value)])
   end
 
   defp node_version(%__MODULE__{mode: :counter} = state, _node), do: state.increments_issued
+  defp node_version(%__MODULE__{mode: :set} = state, _node), do: state.adds_issued
+  defp node_version(%__MODULE__{mode: :orset} = state, _node), do: state.orset_ops_issued
+
+  defp node_version(%__MODULE__{mode: :register, origin: origin}, node) do
+    node.known[origin].version
+  end
+
+  defp node_version(%__MODULE__{mode: :mv_register, origin: origin}, node) do
+    MapSet.size(node.known[origin].context)
+  end
+
+  defp node_version(%__MODULE__{mode: :map, origin: origin}, node) do
+    map_size(get_in(node.known, [origin]).fields)
+  end
 
   defp node_version(%__MODULE__{origin: origin}, node) do
     get_in(node, [Access.key(:known), origin, Access.key(:version)])
@@ -785,6 +1556,7 @@ defmodule SignalGarden.Sim.Core do
         key: key,
         last_time: t,
         last_kind: kind,
+        cut: MapSet.member?(state.link_cuts, key),
         partitioned: Map.get(state.partitions, a, 0) != Map.get(state.partitions, b, 0)
       }
     end)
@@ -800,6 +1572,32 @@ defmodule SignalGarden.Sim.Core do
       seed: scenario.seed
     }
   end
+
+  # The key universe for the control room: the keys a scenario declares plus
+  # every key written so far, so a new key shows up the moment it is written.
+  defp map_key_options(%__MODULE__{} = state) do
+    (state.scenario.map_keys ++ Map.keys(state.map_fields))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp snapshot_map_fields(%__MODULE__{} = state) do
+    state.map_fields
+    |> Enum.sort_by(fn {key, _field} -> key end)
+    |> Enum.map(fn {key, %{value: value, version: version}} ->
+      %{key: key, value: value, version: version}
+    end)
+  end
+
+  defp snapshot_mv_entries(%__MODULE__{mv_entries: entries}) do
+    entries
+    |> Enum.sort_by(fn {{node, sequence}, _value} -> {node, sequence} end)
+    |> Enum.map(fn {{node, sequence}, value} ->
+      %{node: node, sequence: sequence, value: value}
+    end)
+  end
+
+  defp edge_key({a, b}), do: edge_key(a, b)
 
   defp edge_key(a, b), do: if(a <= b, do: {a, b}, else: {b, a})
 end

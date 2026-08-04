@@ -54,6 +54,12 @@ defmodule SignalGarden.Sim.Engine do
   def assign_partition(node, group),
     do: GenServer.cast(__MODULE__, {:command, {:assign, node, group}})
 
+  def cut_link(a, b), do: GenServer.cast(__MODULE__, {:command, {:cut, {a, b}}})
+  def heal_link(a, b), do: GenServer.cast(__MODULE__, {:command, {:heal_link, {a, b}}})
+
+  def toggle_link_cut(a, b),
+    do: GenServer.cast(__MODULE__, {:command, {:toggle_link_cut, {a, b}}})
+
   def merge, do: GenServer.cast(__MODULE__, {:command, {:merge, :all}})
 
   def crash(node), do: GenServer.cast(__MODULE__, {:command, {:crash, node}})
@@ -61,6 +67,18 @@ defmodule SignalGarden.Sim.Engine do
 
   def increment(node, amount \\ 1),
     do: GenServer.cast(__MODULE__, {:command, {:increment, node, amount}})
+
+  def add(node, element),
+    do: GenServer.cast(__MODULE__, {:command, {:add, node, element}})
+
+  def remove(node, element),
+    do: GenServer.cast(__MODULE__, {:command, {:remove, node, element}})
+
+  def write(node, value),
+    do: GenServer.cast(__MODULE__, {:command, {:write, node, value}})
+
+  def put(node, key, value),
+    do: GenServer.cast(__MODULE__, {:command, {:put, node, key, value}})
 
   # ---------------------------------------------------------------------------
   # gen server callbacks

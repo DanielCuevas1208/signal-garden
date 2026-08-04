@@ -63,10 +63,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     partitioned = edge.partitioned
 
     cond do
+      edge.cut -> "#fb7185"
       partitioned and recent and kind == :deliver -> "#fca5a5"
       partitioned -> "#b45309"
       recent and kind == :deliver -> "#22d3ee"
-      recent and kind in [:dropped_loss, :dropped_partition] -> "#fb7185"
+      recent and kind in [:dropped_loss, :dropped_partition, :dropped_cut] -> "#fb7185"
       true -> "#334155"
     end
   end
@@ -75,6 +76,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     recent = recent?(clock, edge.last_time)
 
     cond do
+      edge.cut -> "sg-edge-cut"
       recent and edge.last_kind == :deliver -> "sg-edge-flow"
       edge.partitioned -> "sg-edge-partitioned"
       true -> ""
@@ -82,7 +84,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   end
 
   def edge_width(edge, clock) do
-    if recent?(clock, edge.last_time), do: 2.6, else: 1.4
+    cond do
+      edge.cut -> 1.8
+      recent?(clock, edge.last_time) -> 2.6
+      true -> 1.4
+    end
   end
 
   def recent?(clock, time) when is_integer(clock) and is_integer(time) do
@@ -136,9 +142,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :deliver -> "text-cyan-300"
       :dropped_partition -> "text-amber-300"
       :dropped_loss -> "text-rose-300"
+      :dropped_cut -> "text-rose-300"
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
+      :added -> "text-fuchsia-300"
+      :removed -> "text-rose-300"
+      :wrote -> "text-amber-300"
+      :put -> "text-cyan-300"
       _ -> "text-slate-300"
     end
   end
@@ -146,9 +157,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:deliver), do: "delivered"
   def log_label(:dropped_partition), do: "dropped (partition)"
   def log_label(:dropped_loss), do: "dropped (loss)"
+  def log_label(:dropped_cut), do: "dropped (cut link)"
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
+  def log_label(:added), do: "added"
+  def log_label(:removed), do: "removed"
+  def log_label(:wrote), do: "posted"
+  def log_label(:put), do: "set"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -171,15 +187,32 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--split"></i>partitioned</span>
+          <span class="sg-legend__item"><i class="sg-swatch sg-swatch--cut"></i>cut link</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
-          <%= if @snapshot.mode == :counter do %>
-            {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
-          <% else %>
-            {@snapshot.reached}/{@snapshot.total} nodes know the latest value
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :set -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full set
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :orset -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the current roster
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :mv_register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold all concurrent values
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :map -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full map
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% _ -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes know the latest value
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
           <% end %>
         </p>
       </div>
@@ -207,17 +240,43 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               </defs>
 
               <g class="sg-edges">
-                <line
+                <g
                   :for={edge <- @snapshot.edges}
-                  x1={px(edge.a, sg, :x)}
-                  y1={px(edge.a, sg, :y)}
-                  x2={px(edge.b, sg, :x)}
-                  y2={px(edge.b, sg, :y)}
-                  class={"sg-edge #{edge_class(edge, sg.clock)}"}
-                  stroke={edge_stroke(edge, sg.clock)}
-                  stroke-width={edge_width(edge, sg.clock)}
-                  stroke-dasharray={edge.partitioned && "6 6"}
-                />
+                  class="sg-edge-wrap"
+                  phx-click="toggle_link_cut"
+                  phx-value-a={edge.a}
+                  phx-value-b={edge.b}
+                  role="button"
+                  tabindex="0"
+                  aria-label={"Toggle link #{edge.a} - #{edge.b}"}
+                >
+                  <line
+                    class="sg-edge__hit"
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                  />
+                  <line
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                    class={"sg-edge #{edge_class(edge, sg.clock)}"}
+                    stroke={edge_stroke(edge, sg.clock)}
+                    stroke-width={edge_width(edge, sg.clock)}
+                  />
+                  <%= if edge.cut do %>
+                    <g
+                      class="sg-edge__cutmark"
+                      transform={"translate(#{mx(edge, sg)} #{my(edge, sg)})"}
+                    >
+                      <circle r="7" class="sg-edge__cutdisc" />
+                      <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" class="sg-edge__cutcross" />
+                      <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" class="sg-edge__cutcross" />
+                    </g>
+                  <% end %>
+                </g>
               </g>
 
               <g class="sg-nodes">
@@ -276,13 +335,31 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
-                  <%= if sg.mode == :counter do %>
+                  <%= if sg.mode in [:counter, :set, :orset, :register] do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
                       class="sg-node__value"
                     >
                       {node.value}
+                    </text>
+                  <% end %>
+                  <%= if sg.mode == :map do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
+                    </text>
+                  <% end %>
+                  <%= if sg.mode == :mv_register do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
                     </text>
                   <% end %>
                 </g>
@@ -301,6 +378,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   defp px(id, sg, :x), do: project(sg_layout(sg, id)) |> elem(0)
   defp px(id, sg, :y), do: project(sg_layout(sg, id)) |> elem(1)
+
+  defp mx(edge, sg), do: (px(edge.a, sg, :x) + px(edge.b, sg, :x)) / 2
+  defp my(edge, sg), do: (px(edge.a, sg, :y) + px(edge.b, sg, :y)) / 2
 
   defp py_label(id, sg) do
     project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 14)
@@ -352,6 +432,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -366,6 +451,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         drop_value={@drop_value}
         speed={@speed}
         fault_node={@fault_node}
+        fault_element={@fault_element}
+        map_keys={@map_keys}
+        fault_key={@fault_key}
+        link_edges={@link_edges}
+        link_edge={@link_edge}
         show_import={@show_import}
         import_json={@import_json}
       />
@@ -382,6 +472,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -518,19 +613,159 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <% end %>
           </div>
         </.form>
+
+        <%= if @snapshot.mode == :set do %>
+          <.form for={nil} id="sg-form-add" phx-submit="add_element" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-add-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to the set"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Add</button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode == :orset do %>
+          <.form for={nil} id="sg-form-orset" phx-submit="orset_op" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-orset-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to or remove from the roster"
+              />
+              <button class="sg-btn sg-btn--write" type="submit" name="op" value="add">
+                Add
+              </button>
+              <button class="sg-btn sg-btn--fault" type="submit" name="op" value="remove">
+                Remove
+              </button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode in [:register, :mv_register] do %>
+          <.form for={nil} id="sg-form-write" phx-submit="publish_value" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id={
+                  if(@snapshot.mode == :mv_register, do: "sg-mv-write-value", else: "sg-write-value")
+                }
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder={
+                  if(@snapshot.mode == :mv_register, do: "concurrent notice", else: "notice text")
+                }
+                aria-label={
+                  if(
+                    @snapshot.mode == :mv_register,
+                    do: "Value to write to the multi-value register",
+                    else: "Value to write to the register"
+                  )
+                }
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Publish</button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode == :map do %>
+          <.form for={nil} id="sg-form-put" phx-submit="put_field" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <select
+                id="sg-map-key"
+                name="key"
+                phx-change="select_map_key"
+                class="sg-faults__select"
+                aria-label="Key to write to the map"
+              >
+                <%= for key <- @map_keys do %>
+                  <option value={key} selected={key == @fault_key}>{key}</option>
+                <% end %>
+              </select>
+              <input
+                id="sg-put-value"
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="status"
+                aria-label="Status to write for the selected key"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Set</button>
+            </div>
+          </.form>
+        <% end %>
+
         <p class="sg-faults__note">
-          <%= if @snapshot.mode == :counter do %>
-            Pick a node, then write to its counter cell or crash and restart it.
-          <% else %>
-            Pick a node, then crash or restart it while the run is active.
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              Pick a node, then write to its counter cell or crash and restart it.
+            <% :set -> %>
+              Pick a node, then add a member to its set or crash and restart it.
+            <% :orset -> %>
+              Pick a node, then add a member, remove a member, or crash and restart it.
+            <% :register -> %>
+              Pick a node, then post a notice or crash and restart it.
+            <% :mv_register -> %>
+              Pick a node, then post a notice or crash and restart it.
+            <% :map -> %>
+              Pick a node, then set a service status or crash and restart it.
+            <% _ -> %>
+              Pick a node, then crash or restart it while the run is active.
           <% end %>
+        </p>
+      </div>
+
+      <div class="sg-faults">
+        <div class="sg-faults__head">Link cut</div>
+        <.form for={nil} id="sg-form-link" phx-change="select_link_edge" class="sg-faults__form">
+          <div class="sg-faults__row">
+            <select id="sg-link-edge" name="edge" class="sg-faults__select">
+              <%= for edge <- @link_edges do %>
+                <option value={edge.value} selected={edge.value == @link_edge}>
+                  {edge.label}
+                </option>
+              <% end %>
+            </select>
+            <button
+              class="sg-btn sg-btn--fault"
+              type="button"
+              phx-click="cut_link"
+              phx-value-edge={@link_edge}
+            >
+              Cut
+            </button>
+            <button
+              class="sg-btn sg-btn--heal"
+              type="button"
+              phx-click="heal_link"
+              phx-value-edge={@link_edge}
+            >
+              Heal
+            </button>
+          </div>
+        </.form>
+        <p class="sg-faults__note">
+          Pick an edge, then cut or heal it. Click any edge on the graph to toggle its cut.
         </p>
       </div>
 
       <div class="sg-controls__hint">
         Click a node to toggle its partition group. Click
         <button class="sg-link" phx-click="merge" type="button">heal</button>
-        to merge all groups.
+        to merge all groups and repair every cut link.
       </div>
 
       <div class="sg-share">
@@ -591,10 +826,106 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Counter total</dt><dd>{@snapshot.counter_total}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :set do %>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.set_adds}</dd>
+          </div>
+          <div>
+            <dt>Elements</dt><dd>{@snapshot.set_size}</dd>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :orset do %>
+          <div>
+            <dt>Ops</dt><dd>{@snapshot.orset_ops}</dd>
+          </div>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.orset_adds}</dd>
+          </div>
+          <div>
+            <dt>Removes</dt><dd>{@snapshot.orset_removes}</dd>
+          </div>
+          <div>
+            <dt>Members</dt><dd>{@snapshot.orset_size}</dd>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
+          </div>
+        <% end %>
+
+        <%= if @snapshot.mode == :mv_register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.mv_writes}</dd>
+          </div>
+          <div>
+            <dt>Values</dt><dd>{@snapshot.mv_conflicts}</dd>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :map do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.map_writes}</dd>
+          </div>
+          <div>
+            <dt>Services</dt><dd>{length(@snapshot.map_fields)}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
       </dl>
+
+      <%= if @snapshot.mode == :set and @snapshot.set_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Set contents</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.set_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :orset and @snapshot.orset_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current roster</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.orset_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :register and @snapshot.register_value != nil do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current notice</h3>
+          <p class="sg-register__value">{@snapshot.register_value}</p>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :mv_register and @snapshot.mv_values != [] do %>
+        <div class="sg-set sg-mv">
+          <h3 class="sg-card__title">Concurrent values</h3>
+          <ul class="sg-set__list">
+            <li :for={value <- @snapshot.mv_values} class="sg-set__chip">
+              {value}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :map and @snapshot.map_fields != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Service status</h3>
+          <ul class="sg-map__list">
+            <li :for={field <- @snapshot.map_fields} class="sg-map__row">
+              <span class="sg-map__key">{field.key}</span>
+              <span class="sg-map__value">{field.value}</span>
+            </li>
+          </ul>
+        </div>
+      <% end %>
     </section>
     """
   end
@@ -617,6 +948,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   <%= cond do %>
                     <% entry.kind == :increment -> %>
                       node {entry.from} wrote +{entry.amount}
+                    <% entry.kind == :added -> %>
+                      node {entry.from} added "{entry.element}"
+                    <% entry.kind == :removed -> %>
+                      node {entry.from} removed "{entry.element}"
+                    <% entry.kind == :wrote -> %>
+                      node {entry.from} posted "{entry.value}"
+                    <% entry.kind == :put -> %>
+                      node {entry.from} set {entry.key} = {entry.value}
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

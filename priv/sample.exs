@@ -101,6 +101,30 @@ d = crash.()
 IO.puts("crash determinism: convergence_time equal = #{c.convergence_time == d.convergence_time}")
 IO.puts("crash determinism: event_log equal        = #{c.event_log == d.event_log}")
 
+# Determinism check: the broken link scenario must replay to the same state.
+cut = fn ->
+  Scenarios.fetch(:cut)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+g = cut.()
+h = cut.()
+
+IO.puts("cut determinism: convergence_time equal  = #{g.convergence_time == h.convergence_time}")
+IO.puts("cut determinism: event_log equal         = #{g.event_log == h.event_log}")
+
 # Determinism check: the counter scenario must converge to the same total.
 counter = fn ->
   Scenarios.fetch(:counter)
@@ -128,3 +152,106 @@ IO.puts(
 
 IO.puts("counter determinism: counter_total equal  = #{e.increments_total == f.increments_total}")
 IO.puts("counter determinism: event_log equal      = #{e.event_log == f.event_log}")
+
+# Determinism check: the set scenario must converge to the same collection.
+guest = fn ->
+  Scenarios.fetch(:guest_list)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+g = guest.()
+h = guest.()
+
+IO.puts("guest determinism: convergence_time equal = #{g.convergence_time == h.convergence_time}")
+IO.puts("guest determinism: elements equal        = #{g.elements == h.elements}")
+IO.puts("guest determinism: event_log equal        = #{g.event_log == h.event_log}")
+
+# Determinism check: the register scenario must converge to the same value.
+bulletin = fn ->
+  Scenarios.fetch(:bulletin)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+i = bulletin.()
+j = bulletin.()
+
+IO.puts(
+  "bulletin determinism: convergence_time equal = #{i.convergence_time == j.convergence_time}"
+)
+
+IO.puts("bulletin determinism: register value equal = #{i.register_value == j.register_value}")
+IO.puts("bulletin determinism: event_log equal       = #{i.event_log == j.event_log}")
+
+# Determinism check: the service board scenario must converge to the same map.
+board = fn ->
+  Scenarios.fetch(:service_board)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+k = board.()
+l = board.()
+
+IO.puts("board determinism: convergence_time equal  = #{k.convergence_time == l.convergence_time}")
+IO.puts("board determinism: map_fields equal        = #{k.map_fields == l.map_fields}")
+IO.puts("board determinism: event_log equal         = #{k.event_log == l.event_log}")
+
+# Determinism check: the shared roster scenario must converge to the same members.
+roster = fn ->
+  Scenarios.fetch(:roster)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+m = roster.()
+n = roster.()
+
+IO.puts("roster determinism: convergence_time equal = #{m.convergence_time == n.convergence_time}")
+IO.puts("roster determinism: roster equal          = #{m.orset_elements == n.orset_elements}")
+IO.puts("roster determinism: event_log equal        = #{m.event_log == n.event_log}")
