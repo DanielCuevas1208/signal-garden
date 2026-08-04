@@ -15,9 +15,10 @@ the same fault on another machine.
 - Logical time that has no link to the wall clock.
 - Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
-- Five gossip payloads: a rumor, a grow-only counter, a grow-only set, a register, and an LWW map.
+- Six gossip payloads: a rumor, a grow-only counter, a grow-only set, an observed-remove set, a register, and an LWW map.
 - A grow-only counter (G-Counter) that converges across the network.
 - A grow-only set (G-Set) that spreads a collection across the network.
+- An observed-remove set (OR-set) where members join and leave the collection.
 - A last-writer-wins register (LWW register) where the newest write wins.
 - A last-writer-wins map (LWW map) where every key converges on its own.
 - Deterministic scenarios with fixed seeds and fault schedules.
@@ -93,7 +94,8 @@ a service status. Use **Export JSON** to download
 the active scenario. Use **Import JSON** to paste a file and load it into the
 control room. Sample files ship at `priv/scenarios/ring.json`,
 `priv/scenarios/counter.json`, `priv/scenarios/set.json`,
-`priv/scenarios/register.json`, and `priv/scenarios/service_board.json`.
+`priv/scenarios/roster.json`, `priv/scenarios/register.json`, and
+`priv/scenarios/service_board.json`.
 
 ## Scenario files
 

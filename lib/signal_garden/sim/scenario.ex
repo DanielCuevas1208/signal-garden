@@ -11,6 +11,7 @@ defmodule SignalGarden.Sim.Scenario do
     * `:rumor` - a single value with a version, seeded by the origin node
     * `:counter` - a grow-only counter, grown by increment fault actions
     * `:set` - a grow-only set, grown by add fault actions
+    * `:orset` - an observed-remove set, changed by add and remove fault actions
     * `:register` - a last-writer-wins register, written by write fault actions
     * `:map` - a last-writer-wins map, written by put fault actions
 
@@ -21,6 +22,13 @@ defmodule SignalGarden.Sim.Scenario do
   Set mode swaps the rumor for a G-Set CRDT. Each node keeps a set of elements
   and merges peer state with set union. Every node converges to the same
   collection, so a membership list or a tag cloud spreads through the network.
+
+  OR-set mode swaps the rumor for an observed-remove set. Each node stores
+  every element with two tag sets, one for adds and one for removes. An add
+  creates a fresh unique tag, and a remove moves every known tag into the
+  removed set. On merge the receiver unions both tag sets, so a removed
+  member never comes back. A roster or a shared shopping list spreads through
+  the network and lets members join and leave.
 
   Register mode swaps the rumor for an LWW register CRDT. Each node keeps one
   value and the version of the write that produced it. On merge the receiver
@@ -50,7 +58,7 @@ defmodule SignalGarden.Sim.Scenario do
             map_keys: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter | :set | :register | :map
+  @type mode :: :rumor | :counter | :set | :orset | :register | :map
 
   @type partition_change ::
           {:merge, :all}
@@ -62,6 +70,7 @@ defmodule SignalGarden.Sim.Scenario do
           | {:restart, pos_integer()}
           | {:increment, pos_integer(), pos_integer()}
           | {:add, pos_integer(), binary() | number()}
+          | {:remove, pos_integer(), binary() | number()}
           | {:write, pos_integer(), binary() | number()}
           | {:put, pos_integer(), binary(), binary() | number()}
   @type fault ::

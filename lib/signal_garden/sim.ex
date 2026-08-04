@@ -80,8 +80,11 @@ defmodule SignalGarden.Sim do
   @doc "Add `amount` to a node's counter cell in counter mode."
   def increment(node, amount \\ 1), do: Engine.increment(node, amount)
 
-  @doc "Add an element to a node's set in set mode."
+  @doc "Add an element to a node's set in set or orset mode."
   def add(node, element), do: Engine.add(node, element)
+
+  @doc "Remove an element from a node's observed-remove set in orset mode."
+  def remove(node, element), do: Engine.remove(node, element)
 
   @doc "Write a value to a node's register in register mode."
   def write(node, value), do: Engine.write(node, value)

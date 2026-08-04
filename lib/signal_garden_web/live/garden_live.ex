@@ -157,6 +157,21 @@ defmodule SignalGardenWeb.GardenLive do
     end
   end
 
+  def handle_event("orset_op", %{"op" => op, "element" => element}, socket) do
+    case normalize_element(element) do
+      nil ->
+        {:noreply, socket}
+
+      value ->
+        case op do
+          "remove" -> Sim.remove(socket.assigns.fault_node, value)
+          _ -> Sim.add(socket.assigns.fault_node, value)
+        end
+
+        {:noreply, assign(socket, :fault_element, "")}
+    end
+  end
+
   def handle_event("publish_value", %{"value" => value}, socket) do
     case normalize_element(value) do
       nil ->

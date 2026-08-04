@@ -123,6 +123,28 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert MapSet.size(state.elements) == 5
   end
 
+  test "the sample roster file loads and converges to the surviving members" do
+    path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "roster.json"])
+    json = File.read!(path)
+    assert {:ok, scenario} = ScenarioCodec.decode(json)
+    assert scenario.name == "Shared roster"
+    assert scenario.mode == :orset
+
+    state =
+      scenario
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+
+    assert state.status == :converged
+    assert state.orset_elements == MapSet.new(["Alan", "Edsger"])
+  end
+
   test "the sample register file loads and converges to the last notice" do
     path = Path.join([:code.priv_dir(:signal_garden), "scenarios", "register.json"])
     json = File.read!(path)
@@ -219,6 +241,40 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert decoded.mode == :set
     assert decoded.fault_schedule == scenario.fault_schedule
     assert {:add, 1, "Ada"} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "orset mode and add and remove faults round-trip through JSON" do
+    scenario = Scenarios.roster()
+    json = ScenarioCodec.encode(scenario)
+    assert {:ok, decoded} = ScenarioCodec.decode(json)
+
+    assert decoded.mode == :orset
+    assert decoded.fault_schedule == scenario.fault_schedule
+    assert decoded.id == :roster
+    assert {:add, 1, "Ada"} in Enum.map(decoded.fault_schedule, & &1.action)
+    assert {:remove, 4, "Ada"} in Enum.map(decoded.fault_schedule, & &1.action)
+  end
+
+  test "an exported orset scenario replays to the same roster" do
+    scenario = Scenarios.roster()
+    json = ScenarioCodec.encode(scenario)
+    {:ok, decoded} = ScenarioCodec.decode(json)
+
+    run = fn s ->
+      s
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+    end
+
+    assert run.(scenario).convergence_time == run.(decoded).convergence_time
+    assert run.(scenario).orset_elements == run.(decoded).orset_elements
+    assert run.(scenario).event_log == run.(decoded).event_log
   end
 
   test "register mode and write faults round-trip through JSON" do

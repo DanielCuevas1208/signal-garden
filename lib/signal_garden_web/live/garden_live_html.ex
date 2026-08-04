@@ -147,6 +147,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
       :added -> "text-fuchsia-300"
+      :removed -> "text-rose-300"
       :wrote -> "text-amber-300"
       :put -> "text-cyan-300"
       _ -> "text-slate-300"
@@ -161,6 +162,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
   def log_label(:added), do: "added"
+  def log_label(:removed), do: "removed"
   def log_label(:wrote), do: "posted"
   def log_label(:put), do: "set"
   def log_label(_), do: "event"
@@ -195,6 +197,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :set -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the full set
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :orset -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the current roster
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :register -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
@@ -327,7 +332,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
-                  <%= if sg.mode in [:counter, :set, :register] do %>
+                  <%= if sg.mode in [:counter, :set, :orset, :register] do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
@@ -614,6 +619,28 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </.form>
         <% end %>
 
+        <%= if @snapshot.mode == :orset do %>
+          <.form for={nil} id="sg-form-orset" phx-submit="orset_op" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-orset-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to or remove from the roster"
+              />
+              <button class="sg-btn sg-btn--write" type="submit" name="op" value="add">
+                Add
+              </button>
+              <button class="sg-btn sg-btn--fault" type="submit" name="op" value="remove">
+                Remove
+              </button>
+            </div>
+          </.form>
+        <% end %>
+
         <%= if @snapshot.mode == :register do %>
           <.form for={nil} id="sg-form-write" phx-submit="publish_value" class="sg-faults__form">
             <div class="sg-faults__row">
@@ -665,6 +692,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               Pick a node, then write to its counter cell or crash and restart it.
             <% :set -> %>
               Pick a node, then add a member to its set or crash and restart it.
+            <% :orset -> %>
+              Pick a node, then add a member, remove a member, or crash and restart it.
             <% :register -> %>
               Pick a node, then post a notice or crash and restart it.
             <% :map -> %>
@@ -781,6 +810,20 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Elements</dt><dd>{@snapshot.set_size}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :orset do %>
+          <div>
+            <dt>Ops</dt><dd>{@snapshot.orset_ops}</dd>
+          </div>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.orset_adds}</dd>
+          </div>
+          <div>
+            <dt>Removes</dt><dd>{@snapshot.orset_removes}</dd>
+          </div>
+          <div>
+            <dt>Members</dt><dd>{@snapshot.orset_size}</dd>
+          </div>
+        <% end %>
         <%= if @snapshot.mode == :register do %>
           <div>
             <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
@@ -804,6 +847,17 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <h3 class="sg-card__title">Set contents</h3>
           <ul class="sg-set__list">
             <li :for={element <- @snapshot.set_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :orset and @snapshot.orset_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current roster</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.orset_elements} class="sg-set__chip">
               {element}
             </li>
           </ul>
@@ -852,6 +906,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       node {entry.from} wrote +{entry.amount}
                     <% entry.kind == :added -> %>
                       node {entry.from} added "{entry.element}"
+                    <% entry.kind == :removed -> %>
+                      node {entry.from} removed "{entry.element}"
                     <% entry.kind == :wrote -> %>
                       node {entry.from} posted "{entry.value}"
                     <% entry.kind == :put -> %>

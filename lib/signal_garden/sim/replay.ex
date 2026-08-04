@@ -29,6 +29,10 @@ defmodule SignalGarden.Sim.Replay do
           steps: non_neg_integer(),
           counter_total: non_neg_integer(),
           set_size: non_neg_integer(),
+          orset_size: non_neg_integer(),
+          orset_adds: non_neg_integer(),
+          orset_removes: non_neg_integer(),
+          orset_elements: [binary() | number()],
           register_value: binary() | number() | nil,
           map_writes: non_neg_integer(),
           map_size: non_neg_integer(),
@@ -84,6 +88,10 @@ defmodule SignalGarden.Sim.Replay do
       steps: core.steps,
       counter_total: core.increments_total,
       set_size: MapSet.size(core.elements),
+      orset_size: MapSet.size(core.orset_elements),
+      orset_adds: core.orset_adds_issued,
+      orset_removes: core.orset_removes_issued,
+      orset_elements: Enum.sort(MapSet.to_list(core.orset_elements)),
       register_value: core.register_value,
       map_writes: core.writes_issued,
       map_size: map_size(core.map_fields),
@@ -133,6 +141,7 @@ defmodule SignalGarden.Sim.Replay do
       steps: a.steps == b.steps,
       history: a.history == b.history,
       event_log: a.event_log == b.event_log,
+      orset_elements: a.orset_elements == b.orset_elements,
       map_fields: a.map_fields == b.map_fields
     }
   end
@@ -238,6 +247,7 @@ defmodule SignalGarden.Sim.Replay do
     case kind do
       :increment -> Map.put(base, :amount, entry.amount)
       :added -> Map.put(base, :element, entry.element)
+      :removed -> Map.put(base, :element, entry.element)
       :wrote -> Map.put(base, :value, entry.value)
       :put -> Map.merge(base, %{key: entry.key, value: entry.value})
       _ -> base

@@ -24,6 +24,7 @@ defmodule SignalGarden.Scenarios do
       cut(),
       counter(),
       guest_list(),
+      roster(),
       bulletin(),
       service_board()
     ]
@@ -290,6 +291,40 @@ defmodule SignalGarden.Scenarios do
         %{at: 1500, action: {:add, 9, "Alan"}, label: "Node 9 adds Alan"},
         %{at: 2200, action: {:add, 4, "Edsger"}, label: "Node 4 adds Edsger"},
         %{at: 2800, action: {:add, 1, "Barbara"}, label: "Node 1 adds Barbara"}
+      ]
+    }
+  end
+
+  @doc """
+  A random graph that replicates an observed-remove set.
+
+  Members join and leave the roster on a schedule. Each node stores every
+  element with an add tag set and a remove tag set. On merge the receiver
+  unions both, so a removed member never comes back, even when the network
+  splits or drops messages.
+  """
+  def roster do
+    topology = Topology.random(12, 3, 66)
+
+    %Scenario{
+      id: :roster,
+      name: "Shared roster",
+      description: "Twelve nodes replicate an OR-set. Members join and leave on a schedule.",
+      seed: 66,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {25, 55},
+      drop_prob: 0.05,
+      gossip_interval_ms: 70,
+      mode: :orset,
+      fault_schedule: [
+        %{at: 400, action: {:add, 1, "Ada"}, label: "Node 1 adds Ada"},
+        %{at: 900, action: {:add, 6, "Grace"}, label: "Node 6 adds Grace"},
+        %{at: 1500, action: {:add, 9, "Alan"}, label: "Node 9 adds Alan"},
+        %{at: 2200, action: {:remove, 4, "Ada"}, label: "Node 4 removes Ada"},
+        %{at: 2800, action: {:add, 1, "Edsger"}, label: "Node 1 adds Edsger"},
+        %{at: 3400, action: {:remove, 6, "Grace"}, label: "Node 6 removes Grace"}
       ]
     }
   end

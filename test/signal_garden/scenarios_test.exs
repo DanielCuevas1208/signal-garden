@@ -44,6 +44,29 @@ defmodule SignalGarden.ScenariosTest do
     end
   end
 
+  test "the Shared roster scenario converges to the surviving members" do
+    scenario = Scenarios.fetch(:roster)
+    state = await_converge(Core.new(scenario), 200_000)
+
+    assert state.status == :converged
+    assert state.orset_ops_issued == 6
+    assert state.orset_elements == MapSet.new(["Alan", "Edsger"])
+
+    for node_id <- scenario.topology.nodes do
+      store = get_in(state.nodes, [node_id, :known, state.origin]).store
+
+      members =
+        store
+        |> Enum.filter(fn {_element, %{adds: adds, removes: removes}} ->
+          MapSet.difference(adds, removes) != MapSet.new()
+        end)
+        |> Enum.map(fn {element, _tags} -> element end)
+        |> MapSet.new()
+
+      assert members == state.orset_elements, "node #{node_id} holds a stale roster"
+    end
+  end
+
   test "the Bulletin board scenario converges to the last notice" do
     scenario = Scenarios.fetch(:bulletin)
     state = await_converge(Core.new(scenario), 200_000)

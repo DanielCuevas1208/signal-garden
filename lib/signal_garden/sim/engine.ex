@@ -71,6 +71,9 @@ defmodule SignalGarden.Sim.Engine do
   def add(node, element),
     do: GenServer.cast(__MODULE__, {:command, {:add, node, element}})
 
+  def remove(node, element),
+    do: GenServer.cast(__MODULE__, {:command, {:remove, node, element}})
+
   def write(node, value),
     do: GenServer.cast(__MODULE__, {:command, {:write, node, value}})
 

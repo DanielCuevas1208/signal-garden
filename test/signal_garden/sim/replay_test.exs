@@ -43,6 +43,17 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert guest.dropped > 0
     end
 
+    test "the roster scenario reports orset mode and the surviving members" do
+      roster = Enum.find(Replay.summaries(), &(&1.id == :roster))
+
+      assert roster.mode == :orset
+      assert roster.orset_adds == 4
+      assert roster.orset_removes == 2
+      assert roster.orset_size == 2
+      assert roster.orset_elements == ["Alan", "Edsger"]
+      assert roster.dropped > 0
+    end
+
     test "the register scenario reports register mode and latest value" do
       bulletin = Enum.find(Replay.summaries(), &(&1.id == :bulletin))
 

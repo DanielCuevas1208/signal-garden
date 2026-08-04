@@ -140,6 +140,64 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.set_size == 0
   end
 
+  test "orset mode shows the roster control and adds a member", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "roster"})
+
+    assert has_element?(view, "#sg-orset-element")
+    assert render(view) =~ "nodes hold the current roster"
+    assert render(view) =~ "Members"
+
+    view
+    |> form("#sg-form-orset", %{element: "Linus"})
+    |> render_submit(%{op: "add"})
+
+    snapshot = await_engine(fn snap -> snap.orset_adds == 1 end)
+    assert snapshot.mode == :orset
+    assert snapshot.orset_adds == 1
+    assert snapshot.orset_size == 1
+    assert snapshot.orset_elements == ["Linus"]
+    assert render(view) =~ "Current roster"
+    assert render(view) =~ "Linus"
+  end
+
+  test "orset mode removes a member from the roster", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "roster"})
+
+    view
+    |> form("#sg-form-orset", %{element: "Grace"})
+    |> render_submit(%{op: "remove"})
+
+    snapshot = await_engine(fn snap -> snap.orset_removes == 1 end)
+    assert snapshot.mode == :orset
+    assert snapshot.orset_removes == 1
+    assert snapshot.orset_size == 0
+    refute render(view) =~ "Current roster"
+  end
+
+  test "an empty orset operation is ignored and keeps the run idle", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "roster"})
+
+    view
+    |> form("#sg-form-orset", %{element: "   "})
+    |> render_submit(%{op: "add"})
+
+    snapshot = await_engine(fn snap -> snap.orset_ops == 0 end)
+    assert snapshot.orset_ops == 0
+    assert snapshot.orset_size == 0
+  end
+
   test "register mode shows the publish control and writes a value", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
