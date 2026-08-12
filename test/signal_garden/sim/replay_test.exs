@@ -73,6 +73,10 @@ defmodule SignalGarden.Sim.ReplayTest do
       db = Enum.find(board.map_fields, &(&1.key == "db"))
       assert db.value == "operational"
       assert db.version == 5
+
+      conflict = Enum.find(Replay.summaries(), &(&1.id == :conflict_board))
+      assert Enum.map(conflict.mv_timeline, & &1.visible) == [true, true]
+      assert Enum.map(conflict.mv_timeline, & &1.observed) == [[], []]
     end
   end
 
@@ -149,6 +153,7 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert check.steps
       assert check.history
       assert check.event_log
+      assert check.mv_timeline
     end
 
     test "accepts a scenario struct and a path" do

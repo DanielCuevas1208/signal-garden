@@ -38,7 +38,7 @@ lib/signal_garden/
     replay.ex         # Headless runner. Drives scenarios and summarizes results.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
-    multi_value_register.ex # Causal-dot merge rules for concurrent writes.
+    multi_value_register.ex # Causal-dot merge rules and timeline evidence.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
@@ -276,6 +276,12 @@ Use **Publish** to create another branch. A later write can resolve observed bra
 
 The replay tool reports mv_values and mv_conflicts in JSON summaries.
 
+The control room also shows a causal timeline.
+Each entry is a causal dot with its node, sequence, value, and observations.
+Visible entries remain active.
+Resolved entries were observed by a later write.
+The headless JSON summary includes `mv_timeline` for the same evidence.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
@@ -423,7 +429,7 @@ Run the full suite:
 mix test
 ```
 
-The suite has 207 tests. It covers the deterministic core, the counter CRDT,
+The suite has 209 tests. It covers the deterministic core, the counter CRDT,
 the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the MV-register,
 the topology builder, the scenario codec, and the scenario catalog. It also
 covers link cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
@@ -448,7 +454,7 @@ mix precommit
 - The OR-set removes only tags already observed by the writer.
 - The register payload is an LWW register. The newest write wins; history is not kept.
 - The map payload is an LWW map. Keys only appear; they cannot be removed.
-- The MV-register keeps concurrent branches. It does not compact causal history.
+- The MV-register keeps concurrent branches and a causal timeline. It does not compact history.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
@@ -468,7 +474,8 @@ Later releases can build on this core without changing the model.
 - **Maps and CRDTs.** Done. The rumor now has an LWW map sibling with scheduled and manual writes per key.
 - **Observed-remove sets.** Done. The Shared roster scenario models causal tags and concurrent add behavior.
 - **Multi-value registers.** Done. The Conflict board keeps concurrent writes visible and exposes causal-dot evidence.
-- **More CRDTs.** Consider state compaction and a richer conflict timeline.
+- **Richer conflict timeline.** Done. MV-register snapshots show active dots, resolved dots, and observed writes.
+- **More CRDTs.** Next: compact causal history and add another conflict-aware payload.
 
 ## License
 

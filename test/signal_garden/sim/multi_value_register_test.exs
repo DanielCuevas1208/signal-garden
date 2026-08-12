@@ -39,4 +39,46 @@ defmodule SignalGarden.Sim.MultiValueRegisterTest do
     assert MultiValueRegister.merge(left, right) == MultiValueRegister.merge(right, left)
     assert MultiValueRegister.merge(merged, merged) == merged
   end
+
+  test ~S(timeline marks concurrent writes as resolved by a later observed write) do
+    left = MultiValueRegister.write(MultiValueRegister.new(), {1, 1}, ~S(blue))
+    right = MultiValueRegister.write(MultiValueRegister.new(), {2, 1}, ~S(green))
+    observed = MultiValueRegister.merge(left, right)
+    later = MultiValueRegister.write(observed, {3, 1}, ~S(violet))
+
+    assert MultiValueRegister.timeline(later) == [
+             %{
+               node: 1,
+               sequence: 1,
+               value: ~S(blue),
+               observed: [],
+               observed_by: [{3, 1}],
+               visible: false
+             },
+             %{
+               node: 2,
+               sequence: 1,
+               value: ~S(green),
+               observed: [],
+               observed_by: [{3, 1}],
+               visible: false
+             },
+             %{
+               node: 3,
+               sequence: 1,
+               value: ~S(violet),
+               observed: [{1, 1}, {2, 1}],
+               observed_by: [],
+               visible: true
+             }
+           ]
+  end
+
+  test ~S(legacy register state remains readable without a history field) do
+    state = %{entries: %{}, context: MapSet.new()}
+    written = MultiValueRegister.write(state, {4, 1}, ~S(yellow))
+
+    assert written.entries == %{{4, 1} => ~S(yellow)}
+    assert written.history == %{{4, 1} => %{value: ~S(yellow), observed: MapSet.new()}}
+  end
 end

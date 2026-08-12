@@ -11,20 +11,38 @@ defmodule SignalGarden.Sim.MultiValueRegister do
   @type value :: binary() | number()
   @type t :: %{
           entries: map(),
-          context: MapSet.t()
+          context: MapSet.t(),
+          history: map()
+        }
+
+  @type timeline_entry :: %{
+          node: pos_integer(),
+          sequence: pos_integer(),
+          value: value(),
+          observed: [dot()],
+          observed_by: [dot()],
+          visible: boolean()
         }
 
   @spec new() :: t()
-  def new, do: %{entries: %{}, context: MapSet.new()}
+  def new, do: %{entries: %{}, context: MapSet.new(), history: %{}}
 
   @spec write(t(), dot(), value()) :: t()
-  def write(%{entries: entries, context: context}, dot, value) do
-    context = context |> MapSet.union(MapSet.new(Map.keys(entries))) |> MapSet.put(dot)
-    %{entries: %{dot => value}, context: context}
+  def write(state, dot, value) do
+    %{entries: entries, context: context, history: history} = normalize(state)
+    observed = MapSet.union(context, MapSet.new(Map.keys(entries)))
+    next_context = MapSet.put(observed, dot)
+
+    next_history = Map.put(history, dot, %{value: value, observed: observed})
+
+    %{entries: %{dot => value}, context: next_context, history: next_history}
   end
 
   @spec merge(t(), t()) :: t()
   def merge(left, right) do
+    left = normalize(left)
+    right = normalize(right)
+
     entries =
       left.entries
       |> Map.merge(right.entries)
@@ -44,7 +62,11 @@ defmodule SignalGarden.Sim.MultiValueRegister do
         end
       end)
 
-    %{entries: entries, context: MapSet.union(left.context, right.context)}
+    %{
+      entries: entries,
+      context: MapSet.union(left.context, right.context),
+      history: Map.merge(left.history, right.history)
+    }
   end
 
   @spec values(t()) :: [value()]
@@ -57,4 +79,37 @@ defmodule SignalGarden.Sim.MultiValueRegister do
 
   @spec conflict_count(t()) :: non_neg_integer()
   def conflict_count(%{entries: entries}), do: map_size(entries)
+
+  @doc ~S(Return every known write with its causal observations and current visibility.)
+  @spec timeline(t()) :: [timeline_entry()]
+  def timeline(state) do
+    %{entries: entries, history: history} = normalize(state)
+
+    history
+    |> Enum.map(fn {{node, sequence} = dot, %{value: value, observed: observed}} ->
+      observed_by =
+        history
+        |> Enum.filter(fn {other_dot, %{observed: other_observed}} ->
+          other_dot != dot and MapSet.member?(other_observed, dot)
+        end)
+        |> Enum.map(&elem(&1, 0))
+        |> sort_dots()
+
+      %{
+        node: node,
+        sequence: sequence,
+        value: value,
+        observed: observed |> MapSet.to_list() |> sort_dots(),
+        observed_by: observed_by,
+        visible: Map.has_key?(entries, dot)
+      }
+    end)
+    |> Enum.sort_by(fn %{sequence: sequence, node: node} -> {sequence, node} end)
+  end
+
+  defp normalize(%{entries: entries, context: context} = state) do
+    %{entries: entries, context: context, history: Map.get(state, :history, %{})}
+  end
+
+  defp sort_dots(dots), do: Enum.sort_by(dots, fn {node, sequence} -> {sequence, node} end)
 end

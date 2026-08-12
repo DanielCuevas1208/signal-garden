@@ -148,6 +148,7 @@ defmodule SignalGarden.Sim.Core do
     register_value: nil,
     mv_entries: %{},
     mv_context: MapSet.new(),
+    mv_history: %{},
     mv_tag_counters: %{},
     map_fields: %{},
     map_keys: [],
@@ -200,6 +201,7 @@ defmodule SignalGarden.Sim.Core do
       writes_issued: 0,
       writes_target: scheduled_writes(scenario),
       register_value: nil,
+      mv_history: %{},
       map_fields: %{},
       map_keys: scenario.map_keys,
       delay_ms: scenario.delay_ms,
@@ -283,7 +285,7 @@ defmodule SignalGarden.Sim.Core do
             %{origin => %{value: nil, version: 0}}
 
           :mv_register ->
-            %{origin => %{entries: %{}, context: MapSet.new()}}
+            %{origin => %{entries: %{}, context: MapSet.new(), history: %{}}}
 
           :map ->
             %{origin => %{fields: %{}}}
@@ -483,7 +485,7 @@ defmodule SignalGarden.Sim.Core do
     do: %{origin => %{value: nil, version: 0}}
 
   defp empty_known(%__MODULE__{mode: :mv_register, origin: origin}),
-    do: %{origin => %{entries: %{}, context: MapSet.new()}}
+    do: %{origin => %{entries: %{}, context: MapSet.new(), history: %{}}}
 
   defp empty_known(%__MODULE__{mode: :map, origin: origin}),
     do: %{origin => %{fields: %{}}}
@@ -1154,7 +1156,7 @@ defmodule SignalGarden.Sim.Core do
 
     target_state =
       SignalGarden.Sim.MultiValueRegister.merge(
-        %{entries: state.mv_entries, context: state.mv_context},
+        %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history},
         next
       )
 
@@ -1166,6 +1168,7 @@ defmodule SignalGarden.Sim.Core do
         writes_target: target,
         mv_entries: target_state.entries,
         mv_context: target_state.context,
+        mv_history: target_state.history,
         mv_tag_counters: Map.put(state.mv_tag_counters, node, sequence),
         latest: %{value: map_size(target_state.entries), version: issued},
         status: status,
@@ -1191,7 +1194,7 @@ defmodule SignalGarden.Sim.Core do
   defp mv_register_informed?(%__MODULE__{} = state, node_id) do
     node = state.nodes[node_id]
     known = get_in(node.known, [state.origin])
-    target = %{entries: state.mv_entries, context: state.mv_context}
+    target = %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history}
 
     node.up and
       state.writes_issued >= state.writes_target and
@@ -1454,6 +1457,7 @@ defmodule SignalGarden.Sim.Core do
           context: state.mv_context
         }),
       mv_entries: snapshot_mv_entries(state),
+      mv_timeline: snapshot_mv_timeline(state),
       map_writes: state.writes_issued,
       map_keys: map_key_options(state),
       map_fields: snapshot_map_fields(state),
@@ -1595,6 +1599,14 @@ defmodule SignalGarden.Sim.Core do
     |> Enum.map(fn {{node, sequence}, value} ->
       %{node: node, sequence: sequence, value: value}
     end)
+  end
+
+  defp snapshot_mv_timeline(%__MODULE__{} = state) do
+    SignalGarden.Sim.MultiValueRegister.timeline(%{
+      entries: state.mv_entries,
+      context: state.mv_context,
+      history: state.mv_history
+    })
   end
 
   defp edge_key({a, b}), do: edge_key(a, b)

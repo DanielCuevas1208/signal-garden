@@ -37,6 +37,7 @@ defmodule SignalGarden.Sim.Replay do
           mv_writes: non_neg_integer(),
           mv_conflicts: non_neg_integer(),
           mv_values: [binary() | number()],
+          mv_timeline: [map()],
           map_writes: non_neg_integer(),
           map_size: non_neg_integer(),
           map_fields: [map()]
@@ -55,6 +56,7 @@ defmodule SignalGarden.Sim.Replay do
           event_log: boolean(),
           mv_entries: boolean(),
           mv_context: boolean(),
+          mv_timeline: boolean(),
           mv_values: boolean(),
           map_fields: boolean()
         }
@@ -107,6 +109,7 @@ defmodule SignalGarden.Sim.Replay do
           entries: core.mv_entries,
           context: core.mv_context
         }),
+      mv_timeline: mv_timeline(core),
       map_writes: core.writes_issued,
       map_size: map_size(core.map_fields),
       map_fields: summarize_map_fields(core.map_fields)
@@ -119,6 +122,14 @@ defmodule SignalGarden.Sim.Replay do
     |> Enum.map(fn {key, %{value: value, version: version}} ->
       %{key: key, value: value, version: version}
     end)
+  end
+
+  defp mv_timeline(%Core{} = core) do
+    SignalGarden.Sim.MultiValueRegister.timeline(%{
+      entries: core.mv_entries,
+      context: core.mv_context,
+      history: core.mv_history
+    })
   end
 
   @doc "Summaries for every catalog scenario, in catalog order."
@@ -158,6 +169,7 @@ defmodule SignalGarden.Sim.Replay do
       orset_elements: a.orset_elements == b.orset_elements,
       mv_entries: a.mv_entries == b.mv_entries,
       mv_context: a.mv_context == b.mv_context,
+      mv_timeline: mv_timeline(a) == mv_timeline(b),
       mv_values:
         SignalGarden.Sim.MultiValueRegister.values(%{
           entries: a.mv_entries,

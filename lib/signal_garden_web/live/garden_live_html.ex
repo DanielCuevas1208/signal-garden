@@ -171,6 +171,22 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     if snapshot.total == 0, do: 0, else: round(snapshot.reached * 100 / snapshot.total)
   end
 
+  def mv_entry_class(%{visible: true}), do: ~S(sg-causal__entry sg-causal__entry--visible)
+  def mv_entry_class(_entry), do: ~S(sg-causal__entry sg-causal__entry--resolved)
+
+  def mv_entry_state(%{visible: true}), do: ~S(visible)
+  def mv_entry_state(_entry), do: ~S(resolved)
+
+  def mv_dot_label(%{node: node, sequence: sequence}), do: ~s(n#{node} · #{sequence})
+
+  def mv_entry_note(%{observed: observed, observed_by: observed_by}) do
+    cond do
+      observed != [] -> ~s|observes #{length(observed)} earlier dot(s)|
+      observed_by != [] -> ~s|resolved by #{length(observed_by)} later dot(s)|
+      true -> ~S(independent branch)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # graph panel
   # ---------------------------------------------------------------------------
@@ -912,6 +928,23 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               {value}
             </li>
           </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :mv_register and @snapshot.mv_timeline != [] do %>
+        <div id='sg-mv-timeline' class='sg-set sg-mv'>
+          <h3 class='sg-card__title'>Causal timeline</h3>
+          <ol class='sg-causal__list'>
+            <li :for={entry <- @snapshot.mv_timeline} class={mv_entry_class(entry)}>
+              <div class='sg-causal__head'>
+                <span class='sg-causal__dot'>{mv_dot_label(entry)}</span>
+                <strong class='sg-causal__value'>{entry.value}</strong>
+                <span class='sg-causal__state'>{mv_entry_state(entry)}</span>
+              </div>
+              <p class='sg-causal__note'>{mv_entry_note(entry)}</p>
+            </li>
+          </ol>
+          <p class='sg-causal__legend'>Visible dots are active. Resolved dots were observed by later writes.</p>
         </div>
       <% end %>
 

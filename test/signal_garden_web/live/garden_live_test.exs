@@ -254,6 +254,7 @@ defmodule SignalGardenWeb.GardenLiveTest do
 
     snapshot = await_engine(fn snap -> snap.mv_writes == 1 end)
     assert snapshot.mode == :mv_register
+    assert has_element?(view, ~S(#sg-mv-timeline))
     assert snapshot.mv_writes == 1
     assert snapshot.mv_values == ["Manual branch"]
     assert render(view) =~ "Concurrent values"

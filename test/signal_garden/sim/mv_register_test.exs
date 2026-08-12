@@ -90,6 +90,8 @@ defmodule SignalGarden.Sim.MVRegisterTest do
     assert snapshot.mode == :mv_register
     assert snapshot.mv_writes == 2
     assert snapshot.mv_conflicts == 2
+    assert Enum.map(snapshot.mv_timeline, & &1.visible) == [true, true]
+    assert Enum.map(snapshot.mv_timeline, & &1.observed) == [[], []]
     assert snapshot.mv_values == ["blue", "green"]
     assert Enum.map(snapshot.mv_entries, & &1.value) == ["blue", "green"]
   end
