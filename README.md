@@ -24,6 +24,7 @@ the same fault on another machine.
 - A multi-value register (MV-register) where concurrent writes remain visible.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
+- Causal-history compaction that removes resolved evidence without changing replicated values.
 - A headless replay tool that reproduces any run from the CLI.
 
 ## Architecture
@@ -59,6 +60,8 @@ The `Replay` module drives the same core with no engine and no browser. It runs
 a scenario to completion and returns a summary. The `mix signal_garden.replay`
 task wraps it for the command line. See the "Headless replay" section below.
 
+MultiValueRegister.compact/1 removes resolved timeline entries. It keeps the causal context, so later merges cannot resurrect an observed write.
+
 The web layer lives in `lib/signal_garden_web/`. A single LiveView renders the
 control room. Plain HEEx templates use hand-written CSS classes, not a UI kit.
 
@@ -88,6 +91,8 @@ Press **Run** to start the loop. Press **Step** to advance a fixed number of
 events. Click a node to toggle its partition group. Click an edge to cut or
 heal that link. Drag the sliders to change delay, loss rate, and speed. Pick a
 scenario from the list to load a new run.
+
+In MV-register mode, use **Compact resolved entries** to remove resolved timeline details. Active branches stay visible.
 
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
 the box to write to a node. In set mode, use the box to add a member. In
@@ -280,7 +285,9 @@ The control room also shows a causal timeline.
 Each entry is a causal dot with its node, sequence, value, and observations.
 Visible entries remain active.
 Resolved entries were observed by a later write.
-The headless JSON summary includes `mv_timeline` for the same evidence.
+Click **Compact resolved entries** to remove resolved timeline details. Active values and causal context remain.
+The headless JSON summary reports `mv_timeline`, retained history, and compacted history counts.
+
 
 ## Sample output
 
@@ -429,7 +436,7 @@ Run the full suite:
 mix test
 ```
 
-The suite has 209 tests. It covers the deterministic core, the counter CRDT,
+The suite has 213 tests. It covers the deterministic core, the counter CRDT,
 the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the MV-register,
 the topology builder, the scenario codec, and the scenario catalog. It also
 covers link cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
@@ -454,7 +461,7 @@ mix precommit
 - The OR-set removes only tags already observed by the writer.
 - The register payload is an LWW register. The newest write wins; history is not kept.
 - The map payload is an LWW map. Keys only appear; they cannot be removed.
-- The MV-register keeps concurrent branches and a causal timeline. It does not compact history.
+- The MV-register keeps concurrent branches and a causal timeline. Compaction removes resolved timeline details; causal context remains.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list.
@@ -475,7 +482,8 @@ Later releases can build on this core without changing the model.
 - **Observed-remove sets.** Done. The Shared roster scenario models causal tags and concurrent add behavior.
 - **Multi-value registers.** Done. The Conflict board keeps concurrent writes visible and exposes causal-dot evidence.
 - **Richer conflict timeline.** Done. MV-register snapshots show active dots, resolved dots, and observed writes.
-- **More CRDTs.** Next: compact causal history and add another conflict-aware payload.
+- **Causal history compaction.** Done. Resolved timeline entries can be removed while causal context remains.
+- **More CRDTs.** Next: add another conflict-aware payload.
 
 ## License
 

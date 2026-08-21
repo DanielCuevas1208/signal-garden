@@ -5,6 +5,9 @@ defmodule SignalGarden.Sim.MultiValueRegister do
   A write carries a causal context and a fresh dot. It replaces values the
   writer has observed. Concurrent values stay visible until a later write
   observes them.
+
+  Compaction removes resolved timeline entries. It keeps the causal context,
+  so later merges still remove an observed value instead of resurrecting it.
   """
 
   @type dot :: {pos_integer(), pos_integer()}
@@ -12,7 +15,8 @@ defmodule SignalGarden.Sim.MultiValueRegister do
   @type t :: %{
           entries: map(),
           context: MapSet.t(),
-          history: map()
+          history: map(),
+          compacted: MapSet.t()
         }
 
   @type timeline_entry :: %{
@@ -25,17 +29,24 @@ defmodule SignalGarden.Sim.MultiValueRegister do
         }
 
   @spec new() :: t()
-  def new, do: %{entries: %{}, context: MapSet.new(), history: %{}}
+  def new,
+    do: %{entries: %{}, context: MapSet.new(), history: %{}, compacted: MapSet.new()}
 
   @spec write(t(), dot(), value()) :: t()
   def write(state, dot, value) do
-    %{entries: entries, context: context, history: history} = normalize(state)
+    %{entries: entries, context: context, history: history, compacted: compacted} =
+      normalize(state)
+
     observed = MapSet.union(context, MapSet.new(Map.keys(entries)))
     next_context = MapSet.put(observed, dot)
-
     next_history = Map.put(history, dot, %{value: value, observed: observed})
 
-    %{entries: %{dot => value}, context: next_context, history: next_history}
+    %{
+      entries: %{dot => value},
+      context: next_context,
+      history: next_history,
+      compacted: compacted
+    }
   end
 
   @spec merge(t(), t()) :: t()
@@ -62,12 +73,53 @@ defmodule SignalGarden.Sim.MultiValueRegister do
         end
       end)
 
+    compacted = MapSet.union(left.compacted, right.compacted)
+
     %{
       entries: entries,
       context: MapSet.union(left.context, right.context),
-      history: Map.merge(left.history, right.history)
+      history: Map.drop(Map.merge(left.history, right.history), MapSet.to_list(compacted)),
+      compacted: compacted
     }
   end
+
+  @doc "Drop resolved timeline entries while retaining the full causal context."
+  @spec compact(t()) :: t()
+  def compact(state) do
+    %{entries: entries, context: context, history: history, compacted: compacted} =
+      normalize(state)
+
+    active_dots = MapSet.new(Map.keys(entries))
+
+    newly_compacted =
+      history
+      |> Map.keys()
+      |> MapSet.new()
+      |> MapSet.difference(active_dots)
+
+    %{
+      entries: entries,
+      context: context,
+      history: Map.drop(history, MapSet.to_list(newly_compacted)),
+      compacted: MapSet.union(compacted, newly_compacted)
+    }
+  end
+
+  @doc "Return true when two registers carry the same replicated value and causal context."
+  @spec equivalent?(t(), t()) :: boolean()
+  def equivalent?(left, right) do
+    left = normalize(left)
+    right = normalize(right)
+    left.entries == right.entries and left.context == right.context
+  end
+
+  @doc "Return the number of resolved timeline entries removed by compaction."
+  @spec compacted_count(t()) :: non_neg_integer()
+  def compacted_count(state), do: state |> normalize() |> Map.fetch!(:compacted) |> MapSet.size()
+
+  @doc "Return the number of timeline entries still retained for inspection."
+  @spec retained_history_count(t()) :: non_neg_integer()
+  def retained_history_count(state), do: state |> normalize() |> Map.fetch!(:history) |> map_size()
 
   @spec values(t()) :: [value()]
   def values(%{entries: entries}) do
@@ -80,7 +132,7 @@ defmodule SignalGarden.Sim.MultiValueRegister do
   @spec conflict_count(t()) :: non_neg_integer()
   def conflict_count(%{entries: entries}), do: map_size(entries)
 
-  @doc ~S(Return every known write with its causal observations and current visibility.)
+  @doc ~S(Return every retained write with its causal observations and current visibility.)
   @spec timeline(t()) :: [timeline_entry()]
   def timeline(state) do
     %{entries: entries, history: history} = normalize(state)
@@ -108,7 +160,12 @@ defmodule SignalGarden.Sim.MultiValueRegister do
   end
 
   defp normalize(%{entries: entries, context: context} = state) do
-    %{entries: entries, context: context, history: Map.get(state, :history, %{})}
+    %{
+      entries: entries,
+      context: context,
+      history: Map.get(state, :history, %{}),
+      compacted: Map.get(state, :compacted, MapSet.new())
+    }
   end
 
   defp sort_dots(dots), do: Enum.sort_by(dots, fn {node, sequence} -> {sequence, node} end)

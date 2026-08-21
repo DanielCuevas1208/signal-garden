@@ -61,6 +61,7 @@ defmodule SignalGarden.Sim.Engine do
     do: GenServer.cast(__MODULE__, {:command, {:toggle_link_cut, {a, b}}})
 
   def merge, do: GenServer.cast(__MODULE__, {:command, {:merge, :all}})
+  def compact_mv_history, do: GenServer.cast(__MODULE__, {:command, :compact_mv_history})
 
   def crash(node), do: GenServer.cast(__MODULE__, {:command, {:crash, node}})
   def restart(node), do: GenServer.cast(__MODULE__, {:command, {:restart, node}})

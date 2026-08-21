@@ -261,6 +261,23 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert render(view) =~ "Manual branch"
   end
 
+  test "multi-value register exposes causal history compaction", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sg-form-scenario")
+    |> render_change(%{"scenario" => "conflict_board"})
+
+    assert has_element?(view, "#sg-compact-history")
+    assert render(view) =~ "History retained"
+    assert render(view) =~ "History compacted"
+
+    view |> render_click("compact_mv_history")
+
+    snapshot = await_engine(fn snap -> snap.mode == :mv_register end)
+    assert snapshot.mv_history_compacted == 0
+  end
+
   test "map mode shows the key picker and sets a service status", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 

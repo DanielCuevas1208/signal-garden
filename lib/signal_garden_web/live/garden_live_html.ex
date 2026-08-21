@@ -696,6 +696,22 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </.form>
         <% end %>
 
+        <%= if @snapshot.mode == :mv_register do %>
+          <div class="sg-faults sg-faults--compact">
+            <div class="sg-faults__head">Causal history</div>
+            <button
+              id="sg-compact-history"
+              class="sg-btn sg-btn--write"
+              type="button"
+              phx-click="compact_mv_history"
+            >
+              Compact resolved entries
+            </button>
+            <p class="sg-faults__note">
+              Keep active branches and causal context. Remove resolved timeline details.
+            </p>
+          </div>
+        <% end %>
         <%= if @snapshot.mode == :map do %>
           <.form for={nil} id="sg-form-put" phx-submit="put_field" class="sg-faults__form">
             <div class="sg-faults__row">
@@ -877,7 +893,14 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <div>
             <dt>Values</dt><dd>{@snapshot.mv_conflicts}</dd>
           </div>
+          <div>
+            <dt>History retained</dt><dd>{@snapshot.mv_history_retained}</dd>
+          </div>
+          <div>
+            <dt>History compacted</dt><dd>{@snapshot.mv_history_compacted}</dd>
+          </div>
         <% end %>
+
         <%= if @snapshot.mode == :map do %>
           <div>
             <dt>Writes</dt><dd>{@snapshot.map_writes}</dd>
@@ -932,19 +955,19 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       <% end %>
 
       <%= if @snapshot.mode == :mv_register and @snapshot.mv_timeline != [] do %>
-        <div id='sg-mv-timeline' class='sg-set sg-mv'>
-          <h3 class='sg-card__title'>Causal timeline</h3>
-          <ol class='sg-causal__list'>
+        <div id="sg-mv-timeline" class="sg-set sg-mv">
+          <h3 class="sg-card__title">Causal timeline</h3>
+          <ol class="sg-causal__list">
             <li :for={entry <- @snapshot.mv_timeline} class={mv_entry_class(entry)}>
-              <div class='sg-causal__head'>
-                <span class='sg-causal__dot'>{mv_dot_label(entry)}</span>
-                <strong class='sg-causal__value'>{entry.value}</strong>
-                <span class='sg-causal__state'>{mv_entry_state(entry)}</span>
+              <div class="sg-causal__head">
+                <span class="sg-causal__dot">{mv_dot_label(entry)}</span>
+                <strong class="sg-causal__value">{entry.value}</strong>
+                <span class="sg-causal__state">{mv_entry_state(entry)}</span>
               </div>
-              <p class='sg-causal__note'>{mv_entry_note(entry)}</p>
+              <p class="sg-causal__note">{mv_entry_note(entry)}</p>
             </li>
           </ol>
-          <p class='sg-causal__legend'>Visible dots are active. Resolved dots were observed by later writes.</p>
+          <p class="sg-causal__legend">Active dots stay visible. Compacted dots remain in causal context.</p>
         </div>
       <% end %>
 

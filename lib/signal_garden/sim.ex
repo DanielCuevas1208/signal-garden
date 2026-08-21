@@ -92,6 +92,9 @@ defmodule SignalGarden.Sim do
   @doc "Set a key to a value on a node's map in map mode."
   def put(node, key, value), do: Engine.put(node, key, value)
 
+  @doc "Compact resolved multi-value register history while preserving causal context."
+  def compact_mv_history, do: Engine.compact_mv_history()
+
   @doc "Heal all partitions."
   def merge, do: Engine.merge()
 end

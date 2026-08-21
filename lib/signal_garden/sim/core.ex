@@ -149,6 +149,7 @@ defmodule SignalGarden.Sim.Core do
     mv_entries: %{},
     mv_context: MapSet.new(),
     mv_history: %{},
+    mv_compacted: MapSet.new(),
     mv_tag_counters: %{},
     map_fields: %{},
     map_keys: [],
@@ -202,6 +203,7 @@ defmodule SignalGarden.Sim.Core do
       writes_target: scheduled_writes(scenario),
       register_value: nil,
       mv_history: %{},
+      mv_compacted: MapSet.new(),
       map_fields: %{},
       map_keys: scenario.map_keys,
       delay_ms: scenario.delay_ms,
@@ -285,7 +287,7 @@ defmodule SignalGarden.Sim.Core do
             %{origin => %{value: nil, version: 0}}
 
           :mv_register ->
-            %{origin => %{entries: %{}, context: MapSet.new(), history: %{}}}
+            %{origin => %{entries: %{}, context: MapSet.new(), history: %{}, compacted: MapSet.new()}}
 
           :map ->
             %{origin => %{fields: %{}}}
@@ -440,6 +442,33 @@ defmodule SignalGarden.Sim.Core do
     %{state | partitions: Map.new(map, fn {k, v} -> {k, v} end)}
   end
 
+  def command(%__MODULE__{mode: :mv_register} = state, :compact_mv_history) do
+    target = %{
+      entries: state.mv_entries,
+      context: state.mv_context,
+      history: state.mv_history,
+      compacted: state.mv_compacted
+    }
+
+    target = SignalGarden.Sim.MultiValueRegister.compact(target)
+
+    nodes =
+      Map.new(state.nodes, fn {id, node} ->
+        current = get_in(node, [:known, state.origin])
+        compacted = SignalGarden.Sim.MultiValueRegister.compact(current)
+        {id, put_in(node, [:known, state.origin], compacted)}
+      end)
+
+    %{
+      state
+      | nodes: nodes,
+        mv_history: target.history,
+        mv_compacted: target.compacted
+    }
+  end
+
+  def command(%__MODULE__{} = state, :compact_mv_history), do: state
+
   def command(%__MODULE__{} = state, _unknown), do: state
 
   # ---------------------------------------------------------------------------
@@ -485,7 +514,7 @@ defmodule SignalGarden.Sim.Core do
     do: %{origin => %{value: nil, version: 0}}
 
   defp empty_known(%__MODULE__{mode: :mv_register, origin: origin}),
-    do: %{origin => %{entries: %{}, context: MapSet.new(), history: %{}}}
+    do: %{origin => %{entries: %{}, context: MapSet.new(), history: %{}, compacted: MapSet.new()}}
 
   defp empty_known(%__MODULE__{mode: :map, origin: origin}),
     do: %{origin => %{fields: %{}}}
@@ -1156,7 +1185,7 @@ defmodule SignalGarden.Sim.Core do
 
     target_state =
       SignalGarden.Sim.MultiValueRegister.merge(
-        %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history},
+        %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history, compacted: state.mv_compacted},
         next
       )
 
@@ -1169,6 +1198,7 @@ defmodule SignalGarden.Sim.Core do
         mv_entries: target_state.entries,
         mv_context: target_state.context,
         mv_history: target_state.history,
+        mv_compacted: target_state.compacted,
         mv_tag_counters: Map.put(state.mv_tag_counters, node, sequence),
         latest: %{value: map_size(target_state.entries), version: issued},
         status: status,
@@ -1194,11 +1224,11 @@ defmodule SignalGarden.Sim.Core do
   defp mv_register_informed?(%__MODULE__{} = state, node_id) do
     node = state.nodes[node_id]
     known = get_in(node.known, [state.origin])
-    target = %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history}
+    target = %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history, compacted: state.mv_compacted}
 
     node.up and
       state.writes_issued >= state.writes_target and
-      known == target
+      SignalGarden.Sim.MultiValueRegister.equivalent?(known, target)
   end
 
   # ---------------------------------------------------------------------------
@@ -1451,6 +1481,8 @@ defmodule SignalGarden.Sim.Core do
       register_writes: state.writes_issued,
       mv_writes: state.writes_issued,
       mv_conflicts: map_size(state.mv_entries),
+      mv_history_retained: map_size(state.mv_history),
+      mv_history_compacted: MapSet.size(state.mv_compacted),
       mv_values:
         SignalGarden.Sim.MultiValueRegister.values(%{
           entries: state.mv_entries,
@@ -1605,7 +1637,8 @@ defmodule SignalGarden.Sim.Core do
     SignalGarden.Sim.MultiValueRegister.timeline(%{
       entries: state.mv_entries,
       context: state.mv_context,
-      history: state.mv_history
+      history: state.mv_history,
+      compacted: state.mv_compacted
     })
   end
 

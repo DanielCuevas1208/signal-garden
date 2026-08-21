@@ -201,6 +201,11 @@ defmodule SignalGardenWeb.GardenLive do
     {:noreply, assign(socket, :fault_node, parse_int(node_id, 1))}
   end
 
+  def handle_event("compact_mv_history", _params, socket) do
+    Sim.compact_mv_history()
+    {:noreply, socket}
+  end
+
   def handle_event("merge", _params, socket) do
     Sim.merge()
     {:noreply, socket}

@@ -96,6 +96,30 @@ defmodule SignalGarden.Sim.MVRegisterTest do
     assert Enum.map(snapshot.mv_entries, & &1.value) == ["blue", "green"]
   end
 
+  test "compaction keeps active branches and records removed timeline entries" do
+    state =
+      Scenarios.fetch(:conflict_board)
+      |> Core.new()
+      |> Core.command({:write, 1, "blue"})
+      |> Core.command({:write, 2, "green"})
+
+    payload = get_in(state.nodes, [1, :known, state.origin])
+    state = %{state | queue: [{1, state.seq + 1, {:deliver, 2, payload}}]}
+    {state, _} = Core.step(state, 1)
+    state = Core.command(state, {:write, 2, "violet"})
+
+    before = Core.snapshot(state)
+    assert before.mv_history_retained == 3
+    assert before.mv_history_compacted == 0
+
+    compacted = state |> Core.command(:compact_mv_history) |> Core.snapshot()
+
+    assert compacted.mv_values == ["violet"]
+    assert compacted.mv_history_retained == 1
+    assert compacted.mv_history_compacted == 2
+    assert Enum.map(compacted.mv_timeline, & &1.value) == ["violet"]
+  end
+
   defp run_to_completion(id), do: Scenarios.fetch(id) |> Core.new() |> run_to_converge()
 
   defp run_to_converge(%Core{} = state), do: await(state, :converged, 200_000)

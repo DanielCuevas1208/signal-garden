@@ -81,4 +81,34 @@ defmodule SignalGarden.Sim.MultiValueRegisterTest do
     assert written.entries == %{{4, 1} => ~S(yellow)}
     assert written.history == %{{4, 1} => %{value: ~S(yellow), observed: MapSet.new()}}
   end
+
+  test "compaction removes resolved history and preserves causal context" do
+    left = MultiValueRegister.write(MultiValueRegister.new(), {1, 1}, "blue")
+    right = MultiValueRegister.write(MultiValueRegister.new(), {2, 1}, "green")
+    observed = MultiValueRegister.merge(left, right)
+    later = MultiValueRegister.write(observed, {3, 1}, "violet")
+
+    compacted = MultiValueRegister.compact(later)
+
+    assert MultiValueRegister.values(compacted) == ["violet"]
+    assert MultiValueRegister.retained_history_count(compacted) == 1
+    assert MultiValueRegister.compacted_count(compacted) == 2
+    assert MapSet.size(compacted.context) == 3
+    assert Enum.map(MultiValueRegister.timeline(compacted), & &1.value) == ["violet"]
+    assert MultiValueRegister.equivalent?(later, compacted)
+    assert MultiValueRegister.values(MultiValueRegister.merge(compacted, left)) == ["violet"]
+  end
+
+  test "a compacted register keeps later concurrent writes separate" do
+    first = MultiValueRegister.write(MultiValueRegister.new(), {1, 1}, "blue")
+    resolved = MultiValueRegister.write(first, {2, 1}, "violet")
+    compacted = MultiValueRegister.compact(resolved)
+    concurrent = MultiValueRegister.write(MultiValueRegister.new(), {3, 1}, "green")
+
+    merged = MultiValueRegister.merge(compacted, concurrent)
+
+    assert MultiValueRegister.values(merged) == ["green", "violet"]
+    assert MultiValueRegister.compacted_count(merged) == 1
+    assert MapSet.size(merged.context) == 3
+  end
 end
