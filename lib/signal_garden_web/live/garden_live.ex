@@ -37,6 +37,7 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:fault_node, snapshot.origin)
       |> assign(:fault_element, "")
       |> assign(:map_keys, snapshot.map_keys)
+      |> assign(:pn_form, pn_form())
       |> assign(:fault_key, first_map_key(snapshot))
       |> assign(:link_edges, edge_options(snapshot))
       |> assign(:link_edge, first_edge_value(snapshot))
@@ -238,6 +239,20 @@ defmodule SignalGardenWeb.GardenLive do
     end
   end
 
+  def handle_event(event, params, socket) when event == ~S(adjust_balance) do
+    params = Map.get(params, ~S(adjustment), params)
+    amount = parse_int(Map.get(params, ~S(amount), ~S()), 0)
+
+    if amount == 0 do
+      {:noreply, socket}
+    else
+      Sim.adjust(socket.assigns.fault_node, amount)
+      {:noreply,
+       socket
+       |> assign(:pn_form, pn_form())}
+    end
+  end
+
   defp import_error({:invalid_json, _}), do: "The file is not valid JSON."
 
   defp import_error({:unsupported_format, version}),
@@ -254,6 +269,10 @@ defmodule SignalGardenWeb.GardenLive do
   # ---------------------------------------------------------------------------
   # helpers
   # ---------------------------------------------------------------------------
+
+  defp pn_form(value \\ ~S()) do
+    Phoenix.Component.to_form(%{~S(amount) => value}, as: :adjustment)
+  end
 
   defp scenario_option(scenario) do
     %{id: scenario.id, name: scenario.name, description: scenario.description}

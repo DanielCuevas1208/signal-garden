@@ -758,6 +758,16 @@ body {
   align-items: center;
 }
 
+.sg-faults__row > .mb-3 {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.sg-faults__row > .mb-3 label {
+  display: block;
+}
+
 .sg-faults__select {
   flex: 1;
   min-width: 0;
@@ -779,6 +789,7 @@ body {
 .sg-faults__input {
   flex: 1;
   min-width: 0;
+  width: 100%;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--sg-edge);
   color: var(--sg-text);

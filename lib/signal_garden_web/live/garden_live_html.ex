@@ -150,6 +150,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :removed -> "text-rose-300"
       :wrote -> "text-amber-300"
       :put -> "text-cyan-300"
+      :adjusted -> "text-violet-300"
       _ -> "text-slate-300"
     end
   end
@@ -165,6 +166,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:removed), do: "removed"
   def log_label(:wrote), do: "posted"
   def log_label(:put), do: "set"
+  def log_label(:adjusted), do: "adjusted"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
@@ -225,6 +227,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% :map -> %>
               {@snapshot.reached}/{@snapshot.total} nodes hold the full map
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :pn_counter -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the final balance
               <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
             <% _ -> %>
               {@snapshot.reached}/{@snapshot.total} nodes know the latest value
@@ -449,6 +454,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
   attr :fault_element, :string, required: true
+  attr :pn_form, :any, required: true
   attr :map_keys, :list, required: true
   attr :fault_key, :string, required: true
   attr :link_edges, :list, required: true
@@ -468,6 +474,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         speed={@speed}
         fault_node={@fault_node}
         fault_element={@fault_element}
+        pn_form={@pn_form}
         map_keys={@map_keys}
         fault_key={@fault_key}
         link_edges={@link_edges}
@@ -489,6 +496,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
   attr :fault_element, :string, required: true
+  attr :pn_form, :any, required: true
   attr :map_keys, :list, required: true
   attr :fault_key, :string, required: true
   attr :link_edges, :list, required: true
@@ -630,6 +638,25 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           </div>
         </.form>
 
+        <%= if @snapshot.mode == :pn_counter do %>
+          <.form for={@pn_form} id={~S(sg-form-adjust)} phx-submit={~S(adjust_balance)} class={~S(sg-faults__form)}>
+            <div class={~S(sg-faults__row)}>
+              <.input
+                field={@pn_form[:amount]}
+                id={~S(sg-pn-amount)}
+                type={~S(number)}
+                min={-20}
+                max={20}
+                step={1}
+                class={~S(sg-faults__input)}
+                placeholder={~S(+3 or -2)}
+                aria-label={~S(Signed balance adjustment)}
+              />
+              <button class={~S(sg-btn sg-btn--write)} type={~S(submit)}>Apply</button>
+            </div>
+          </.form>
+        <% end %>
+
         <%= if @snapshot.mode == :set do %>
           <.form for={nil} id="sg-form-add" phx-submit="add_element" class="sg-faults__form">
             <div class="sg-faults__row">
@@ -754,6 +781,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               Pick a node, then post a notice or crash and restart it.
             <% :map -> %>
               Pick a node, then set a service status or crash and restart it.
+            <% :pn_counter -> %>
+              Pick a node, then apply a positive or negative balance change.
             <% _ -> %>
               Pick a node, then crash or restart it while the run is active.
           <% end %>
@@ -912,6 +941,20 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
+        <%= if @snapshot.mode == :pn_counter do %>
+          <div>
+            <dt>Adjustments</dt><dd>{@snapshot.pn_adjustments}</dd>
+          </div>
+          <div>
+            <dt>Credits</dt><dd>{@snapshot.pn_positive}</dd>
+          </div>
+          <div>
+            <dt>Debits</dt><dd>{@snapshot.pn_negative}</dd>
+          </div>
+          <div>
+            <dt>Balance</dt><dd>{@snapshot.pn_total}</dd>
+          </div>
+        <% end %>
       </dl>
 
       <%= if @snapshot.mode == :set and @snapshot.set_elements != [] do %>
@@ -1012,6 +1055,8 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                       node {entry.from} posted "{entry.value}"
                     <% entry.kind == :put -> %>
                       node {entry.from} set {entry.key} = {entry.value}
+                    <% entry.kind == :adjusted -> %>
+                      node {entry.from} adjusted {entry.amount}
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

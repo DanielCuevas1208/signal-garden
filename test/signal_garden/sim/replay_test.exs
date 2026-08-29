@@ -35,6 +35,17 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert counter.dropped > 0
     end
 
+    test ~S(the ledger summary includes signed totals) do
+      ledger = Enum.find(Replay.summaries(), &(&1.id == :ledger))
+
+      assert ledger.mode == :pn_counter
+      assert ledger.pn_adjustments == 5
+      assert ledger.pn_counter_total == 1
+      assert ledger.pn_positive_total == 8
+      assert ledger.pn_negative_total == 7
+      assert ledger.dropped > 0
+    end
+
     test "the set scenario reports set mode and element count" do
       guest = Enum.find(Replay.summaries(), &(&1.id == :guest_list))
 

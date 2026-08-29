@@ -69,6 +69,9 @@ defmodule SignalGarden.Sim.Engine do
   def increment(node, amount \\ 1),
     do: GenServer.cast(__MODULE__, {:command, {:increment, node, amount}})
 
+  def adjust(node, amount),
+    do: GenServer.cast(__MODULE__, {:command, {:adjust, node, amount}})
+
   def add(node, element),
     do: GenServer.cast(__MODULE__, {:command, {:add, node, element}})
 

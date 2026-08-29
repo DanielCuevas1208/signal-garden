@@ -5,6 +5,8 @@ message delay, network partitions, retries, and eventual convergence in a
 browser. A deterministic gossip network runs in Elixir. A Phoenix LiveView
 control room shows the message as it spreads.
 
+A PN-counter view also shows how credits and debits survive replication.
+
 The same scenario always produces the same event trace, convergence time, and
 history. Two runs with the same seed produce the same bytes. Anyone can replay
 the same fault on another machine.
@@ -15,13 +17,15 @@ the same fault on another machine.
 - Logical time that has no link to the wall clock.
 - Four network hazards: delay, message loss, partitions, and cut links.
 - Node crash and restart. A crashed node forgets its state and stops the spread.
-- Seven gossip payloads: a rumor, a grow-only counter, a grow-only set, an observed-remove set, a register, an LWW map, and an MV-register.
+- Eight gossip payloads are available.
+- They include a rumor, a G-Counter, a G-Set, an OR-set, an LWW register, an LWW map, an MV-register, and a PN-counter.
 - A grow-only counter (G-Counter) that converges across the network.
 - A grow-only set (G-Set) that spreads a collection across the network.
 - An observed-remove set (OR-set) where members join and leave the collection.
 - A last-writer-wins register (LWW register) where the newest write wins.
 - A last-writer-wins map (LWW map) where every key converges on its own.
 - A multi-value register (MV-register) where concurrent writes remain visible.
+- A positive-negative counter (PN-counter) where credits and debits merge independently.
 - Deterministic scenarios with fixed seeds and fault schedules.
 - A live SVG graph, a convergence chart, and an event feed.
 - Causal-history compaction that removes resolved evidence without changing replicated values.
@@ -40,6 +44,7 @@ lib/signal_garden/
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     multi_value_register.ex # Causal-dot merge rules and timeline evidence.
+    pn_counter.ex       # Positive and negative grow-only cell maps.
     topology.ex       # Builds line, ring, grid, complete, and random graphs.
   scenarios.ex        # The built-in catalog of scenarios.
   sim.ex              # Thin facade the LiveView calls.
@@ -92,6 +97,9 @@ events. Click a node to toggle its partition group. Click an edge to cut or
 heal that link. Drag the sliders to change delay, loss rate, and speed. Pick a
 scenario from the list to load a new run.
 
+In PN-counter mode, select a node and enter a positive or negative adjustment.
+The telemetry card shows credits, debits, and the resulting balance.
+
 In MV-register mode, use **Compact resolved entries** to remove resolved timeline details. Active branches stay visible.
 
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
@@ -103,9 +111,10 @@ control room. Sample files ship at `priv/scenarios/ring.json`,
 `priv/scenarios/counter.json`, `priv/scenarios/set.json`,
 `priv/scenarios/roster.json`, `priv/scenarios/register.json`, and
 `priv/scenarios/service_board.json`, and
-`priv/scenarios/conflict_board.json`.
+`priv/scenarios/conflict_board.json`, and `priv/scenarios/ledger.json`.
 
 ## Scenario files
+`priv/scenarios/ledger.json` demonstrates the signed counter.
 
 A scenario file is versioned JSON. It carries the topology, the seed, the fault
 schedule, the payload mode, and every network parameter. It also carries the
@@ -123,7 +132,7 @@ alias SignalGarden.Sim.ScenarioCodec
 
 ## Built-in scenarios
 
-The scenario catalog ships with fifteen runs. Each one fixes a topology, a
+The scenario catalog ships with sixteen runs. Each one fixes a topology, a
 seed, and a set of network conditions.
 
 | Scenario | Nodes | Faults |
@@ -143,6 +152,7 @@ seed, and a set of network conditions.
 | Bulletin board | 12 | five notices overwrite an LWW register on a schedule |
 | Service board | 12 | five statuses update an LWW map on a schedule |
 | Conflict board | 12 | two concurrent notices remain visible in an MV-register |
+| Balance ledger | 12 | five signed adjustments update a PN-counter on a schedule |
 
 ## Link cuts
 
@@ -182,6 +192,25 @@ re-climbs as the write spreads.
 Convergence needs every scheduled write to be issued. The run re-arms when you
 write after it converged, so you can watch the new total spread. A manual
 write survives only the current run. Reset rebuilds the scenario from its seed.
+
+## Positive-negative counters
+
+The Balance ledger scenario uses a PN-counter.
+
+A PN-counter stores two grow-only cell maps.
+Credits increase the positive map.
+Debits increase the negative map.
+Merges keep the maximum value for each node cell.
+The visible balance equals credits minus debits.
+
+The ledger finishes at balance 1.
+It records 8 credits and 7 debits.
+The telemetry card shows each total.
+The event feed shows every signed adjustment.
+
+The Node fault box accepts values from -20 to 20.
+Zero does not create an adjustment.
+Manual adjustments re-arm a completed run.
 
 ## Sets and CRDTs
 
@@ -312,6 +341,7 @@ Shared roster       12     converged    4219      688    36        1414
 Bulletin board      12     converged    3688      601    36        1239
 Service board       12     converged    3860      631    37        1298
 Conflict board      12     converged    1225      183    9         369
+Balance ledger      12     converged    3827      552    26        1126
 ```
 
 The determinism check confirms the core is reproducible:
@@ -342,6 +372,10 @@ board determinism: event_log equal         = true
 conflict determinism: convergence_time equal = true
 conflict determinism: values equal          = true
 conflict determinism: event_log equal       = true
+ledger determinism: convergence_time equal = true
+ledger determinism: positive cells equal     = true
+ledger determinism: negative cells equal     = true
+ledger determinism: event_log equal           = true
 ```
 
 Reproduce this output from a checkout with:
@@ -350,8 +384,8 @@ Reproduce this output from a checkout with:
 mix signal_garden.replay
 ```
 
-The legacy script `mix run --no-start priv/sample.exs` prints the same table
-and the same determinism checks.
+The legacy script `mix run --no-start priv/sample.exs` prints the same table.
+It also checks selected scenarios for repeatable output.
 
 ## Headless replay
 
@@ -383,6 +417,8 @@ reproducible. The CI workflow runs `--check-all` on every push.
 
 ## Status model
 
+PN-counter summaries include the signed balance, credit total, and debit total.
+
 The control room shows a status pill. The status drives the run loop.
 
 - **Ready**: a scenario is loaded and idle.
@@ -408,6 +444,9 @@ key. The run cannot converge before every scheduled status is set.
 
 In MV-register mode, **Converged** means every node holds every visible branch.
 A later write can replace branches that its writer has observed.
+
+In PN-counter mode, **Converged** means every node holds both cell maps.
+The balance equals credits minus debits.
 
 ## Crash and restart
 
@@ -436,12 +475,15 @@ Run the full suite:
 mix test
 ```
 
-The suite has 213 tests. It covers the deterministic core, the counter CRDT,
+The suite has 226 tests. It covers the deterministic core, the counter CRDT,
 the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the MV-register,
+the PN-counter,
 the topology builder, the scenario codec, and the scenario catalog. It also
 covers link cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
 never sleep and never read the wall clock. Each core test replays a scenario
 and asserts on the resulting state.
+
+All 226 tests pass in this checkout.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -451,6 +493,9 @@ mix precommit
 ```
 
 ## Limitations
+
+PN-counter cell maps grow as adjustments arrive.
+A debit does not erase an earlier credit.
 
 - Logical time is synthetic, so convergence times compare runs, not real hosts.
 - Partitions are modelled as group labels. Link cuts cover the per-edge case.
@@ -483,7 +528,8 @@ Later releases can build on this core without changing the model.
 - **Multi-value registers.** Done. The Conflict board keeps concurrent writes visible and exposes causal-dot evidence.
 - **Richer conflict timeline.** Done. MV-register snapshots show active dots, resolved dots, and observed writes.
 - **Causal history compaction.** Done. Resolved timeline entries can be removed while causal context remains.
-- **More CRDTs.** Next: add another conflict-aware payload.
+- **More CRDTs.** Done. The Balance ledger adds a PN-counter with signed adjustments.
+- **Scenario comparison.** Next: compare two deterministic traces side by side.
 
 ## License
 

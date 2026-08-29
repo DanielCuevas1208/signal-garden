@@ -27,7 +27,8 @@ defmodule SignalGarden.Scenarios do
       roster(),
       bulletin(),
       service_board(),
-      conflict_board()
+      conflict_board(),
+      ledger()
     ]
   end
 
@@ -435,6 +436,31 @@ defmodule SignalGarden.Scenarios do
       fault_schedule: [
         %{at: 400, action: {:write, 2, "blue"}, label: "Node 2 writes blue"},
         %{at: 400, action: {:write, 9, "green"}, label: "Node 9 writes green"}
+      ]
+    }
+  end
+
+  @doc "A random graph that replicates a positive-negative counter."
+  def ledger do
+    topology = Topology.random(12, 3, 88)
+    %Scenario{
+      id: :ledger,
+      name: "Balance ledger",
+      description: "Twelve nodes replicate a PN-counter.",
+      seed: 88,
+      topology: topology,
+      origin: 1,
+      latest_value: 0,
+      delay_ms: {30, 65},
+      drop_prob: 0.05,
+      gossip_interval_ms: 80,
+      mode: :pn_counter,
+      fault_schedule: [
+        %{at: 400, action: {:adjust, 1, 5}, label: "Node 1 credits +5"},
+        %{at: 900, action: {:adjust, 6, -2}, label: "Node 6 debits -2"},
+        %{at: 1500, action: {:adjust, 9, 3}, label: "Node 9 credits +3"},
+        %{at: 2200, action: {:adjust, 4, -4}, label: "Node 4 debits -4"},
+        %{at: 2800, action: {:adjust, 1, -1}, label: "Node 1 debits -1"}
       ]
     }
   end

@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board ledger imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()
@@ -117,6 +117,16 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     %{
       "at" => at,
       "action" => "increment",
+      "node" => node,
+      "amount" => amount,
+      "label" => label
+    }
+  end
+
+  defp encode_fault(%{at: at, action: {:adjust, node, amount}, label: label}) do
+    %{
+      "at" => at,
+      "action" => "adjust",
       "node" => node,
       "amount" => amount,
       "label" => label
@@ -336,6 +346,18 @@ defmodule SignalGarden.Sim.ScenarioCodec do
     end
   end
 
+  defp decode_fault(
+         %{
+           "at" => at,
+           "action" => "adjust",
+           "node" => node,
+           "amount" => amount
+         } = map
+       )
+       when is_integer(at) and is_integer(node) and is_integer(amount) and amount != 0 do
+    {:ok, %{at: at, action: {:adjust, node, amount}, label: Map.get(map, "label")}}
+  end
+
   defp decode_fault(%{"at" => at, "action" => "add", "node" => node, "element" => element} = map)
        when is_integer(at) and is_integer(node) and (is_binary(element) or is_number(element)) do
     if String.trim(element) != "" do
@@ -387,6 +409,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
   defp decode_mode(%{"mode" => "mv_register"}), do: {:ok, :mv_register}
   defp decode_mode(%{"mode" => "map"}), do: {:ok, :map}
   defp decode_mode(%{"mode" => "rumor"}), do: {:ok, :rumor}
+  defp decode_mode(%{~S(mode) => ~S(pn_counter)}), do: {:ok, :pn_counter}
   defp decode_mode(_), do: {:ok, :rumor}
 
   defp decode_map_keys(nil), do: {:ok, []}

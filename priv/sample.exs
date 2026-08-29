@@ -252,6 +252,31 @@ end
 m = roster.()
 n = roster.()
 
+ledger = fn ->
+  Scenarios.fetch(:ledger)
+  |> Core.new()
+  |> Core.command({:set_status, :running})
+  |> then(fn state ->
+    Enum.reduce_while(1..10_000, state, fn _, acc ->
+      {acc, _} = Core.step(acc, 200)
+
+      if acc.status in [:converged, :exhausted] do
+        {:halt, acc}
+      else
+        {:cont, acc}
+      end
+    end)
+  end)
+end
+
+o = ledger.()
+p = ledger.()
+
+IO.puts(~s(ledger determinism: convergence_time equal = #{o.convergence_time == p.convergence_time}))
+IO.puts(~s(ledger determinism: positive cells equal     = #{o.pn_counter.positive == p.pn_counter.positive}))
+IO.puts(~s(ledger determinism: negative cells equal     = #{o.pn_counter.negative == p.pn_counter.negative}))
+IO.puts(~s(ledger determinism: event_log equal           = #{o.event_log == p.event_log}))
+
 IO.puts("roster determinism: convergence_time equal = #{m.convergence_time == n.convergence_time}")
 IO.puts("roster determinism: roster equal          = #{m.orset_elements == n.orset_elements}")
 IO.puts("roster determinism: event_log equal        = #{m.event_log == n.event_log}")

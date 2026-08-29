@@ -49,7 +49,7 @@ defmodule SignalGarden.Sim.Core do
 
   ## Modes
 
-  A scenario selects one of seven payload modes.
+  A scenario selects one of eight payload modes.
 
   The `:rumor` mode (the default) gossips one value with a version. The origin
   node seeds the value, and a node becomes informed when it holds that exact
@@ -96,10 +96,15 @@ defmodule SignalGarden.Sim.Core do
   The `:mv_register` mode gossips a multi-value register. Each write carries
   the dots it has observed. Concurrent writes remain visible as separate
   values. A later write removes the values its writer has seen.
+
+  The :pn_counter mode gossips a positive-negative counter. Each node keeps
+  positive and negative grow-only cell maps. A signed adjustment updates one
+  cell, and delivery merges both maps with element-wise max. The balance is
+  the positive total minus the negative total.
   """
 
   @type status :: :idle | :running | :paused | :converged | :exhausted
-  @type mode :: :rumor | :counter | :set | :register | :map | :orset | :mv_register
+  @type mode :: :rumor | :counter | :set | :register | :map | :orset | :mv_register | :pn_counter
 
   @type event ::
           {:gossip, pos_integer()}
@@ -151,6 +156,10 @@ defmodule SignalGarden.Sim.Core do
     mv_history: %{},
     mv_compacted: MapSet.new(),
     mv_tag_counters: %{},
+    pn_adjustments_issued: 0,
+    pn_adjustments_total: 0,
+    pn_adjustment_target: 0,
+    pn_counter: %{positive: %{}, negative: %{}},
     map_fields: %{},
     map_keys: [],
     rng: nil,
@@ -204,6 +213,10 @@ defmodule SignalGarden.Sim.Core do
       register_value: nil,
       mv_history: %{},
       mv_compacted: MapSet.new(),
+      pn_adjustments_issued: 0,
+      pn_adjustments_total: 0,
+      pn_adjustment_target: scheduled_pn_adjustments(scenario),
+      pn_counter: %{positive: %{}, negative: %{}},
       map_fields: %{},
       map_keys: scenario.map_keys,
       delay_ms: scenario.delay_ms,
@@ -222,7 +235,7 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp latest_for(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register, :pn_counter],
        do: %{value: 0, version: 0}
 
   defp latest_for(%SignalGarden.Sim.Scenario{latest_value: value}),
@@ -261,8 +274,16 @@ defmodule SignalGarden.Sim.Core do
 
   defp scheduled_writes(_scenario), do: 0
 
+  defp scheduled_pn_adjustments(%SignalGarden.Sim.Scenario{mode: :pn_counter} = scenario) do
+    Enum.count(scenario.fault_schedule, fn fault ->
+      match?({:adjust, _, _}, fault.action)
+    end)
+  end
+
+  defp scheduled_pn_adjustments(_scenario), do: 0
+
   defp initial_informed(%SignalGarden.Sim.Scenario{mode: mode})
-       when mode in [:counter, :set, :register, :map, :orset, :mv_register],
+       when mode in [:counter, :set, :register, :map, :orset, :mv_register, :pn_counter],
        do: MapSet.new()
 
   defp initial_informed(%SignalGarden.Sim.Scenario{origin: origin}),
@@ -288,6 +309,9 @@ defmodule SignalGarden.Sim.Core do
 
           :mv_register ->
             %{origin => %{entries: %{}, context: MapSet.new(), history: %{}, compacted: MapSet.new()}}
+
+          :pn_counter ->
+            %{origin => SignalGarden.Sim.PNCounter.new()}
 
           :map ->
             %{origin => %{fields: %{}}}
@@ -400,6 +424,11 @@ defmodule SignalGarden.Sim.Core do
     apply_increment(state, node, amount, true)
   end
 
+  def command(%__MODULE__{mode: :pn_counter} = state, {:adjust, node, amount})
+      when is_integer(node) and is_integer(amount) and amount != 0 do
+    apply_pn_adjustment(state, node, amount, true)
+  end
+
   def command(%__MODULE__{mode: :set} = state, {:add, node, element})
       when is_integer(node) and (is_binary(element) or is_number(element)) do
     apply_add(state, node, element, true)
@@ -503,6 +532,9 @@ defmodule SignalGarden.Sim.Core do
 
   defp empty_known(%__MODULE__{mode: :counter, origin: origin}),
     do: %{origin => %{cells: %{}}}
+
+  defp empty_known(%__MODULE__{mode: :pn_counter, origin: origin}),
+    do: %{origin => SignalGarden.Sim.PNCounter.new()}
 
   defp empty_known(%__MODULE__{mode: :set, origin: origin}),
     do: %{origin => %{elements: MapSet.new()}}
@@ -612,6 +644,21 @@ defmodule SignalGarden.Sim.Core do
     %{state | event_log: log}
   end
 
+  defp log_adjust(%__MODULE__{} = state, node, amount) do
+    entry = %{
+      t: state.clock,
+      kind: :adjusted,
+      from: node,
+      to: nil,
+      amount: amount,
+      partition: false
+    }
+
+    log = [entry | state.event_log]
+    log = Enum.take(log, state.log_size)
+    %{state | event_log: log}
+  end
+
   # ---------------------------------------------------------------------------
   # stepping
   # ---------------------------------------------------------------------------
@@ -665,6 +712,7 @@ defmodule SignalGarden.Sim.Core do
   defp handle_event(%__MODULE__{} = state, {:deliver, to, payload}) do
     case state.mode do
       :counter -> deliver_counter(state, to, payload)
+      :pn_counter -> deliver_pn_counter(state, to, payload)
       :set -> deliver_set(state, to, payload)
       :orset -> deliver_orset(state, to, payload)
       :register -> deliver_register(state, to, payload)
@@ -676,6 +724,10 @@ defmodule SignalGarden.Sim.Core do
 
   defp handle_event(%__MODULE__{} = state, {:fault, {:increment, node, amount}}) do
     apply_increment(state, node, amount, false)
+  end
+
+  defp handle_event(%__MODULE__{} = state, {:fault, {:adjust, node, amount}}) do
+    apply_pn_adjustment(state, node, amount, false)
   end
 
   defp handle_event(%__MODULE__{} = state, {:fault, {:add, node, element}}) do
@@ -740,6 +792,20 @@ defmodule SignalGarden.Sim.Core do
       cells = merge_counter(current.cells, payload.cells)
 
       nodes = put_in(state.nodes, [to, :known, state.origin], %{cells: cells})
+      state = %{state | nodes: nodes, delivered: state.delivered + 1}
+      refresh_node_informed(state, to)
+    end
+  end
+
+  defp deliver_pn_counter(%__MODULE__{} = state, to, payload) do
+    node = state.nodes[to]
+
+    if not node.up do
+      %{state | dropped: state.dropped + 1}
+    else
+      current = get_in(node.known, [state.origin])
+      counter = SignalGarden.Sim.PNCounter.merge(current, payload)
+      nodes = put_in(state.nodes, [to, :known, state.origin], counter)
       state = %{state | nodes: nodes, delivered: state.delivered + 1}
       refresh_node_informed(state, to)
     end
@@ -936,6 +1002,48 @@ defmodule SignalGarden.Sim.Core do
   # counter mode (grow-only counter)
   # ---------------------------------------------------------------------------
 
+  # A PN-counter uses two grow-only maps. Positive and negative adjustments
+  # never overwrite each other, so a merge cannot lose a concurrent change.
+  defp apply_pn_adjustment(%__MODULE__{mode: :pn_counter} = state, node, amount, bump_target?) do
+    issued = state.pn_adjustments_issued + 1
+    total = state.pn_adjustments_total + amount
+    target = if bump_target?, do: state.pn_adjustment_target + 1, else: state.pn_adjustment_target
+    current = get_in(state.nodes, [node, :known, state.origin])
+    current = preserve_pn_cell(current, state.pn_counter, node, amount)
+    counter = SignalGarden.Sim.PNCounter.adjust(current, node, amount)
+    authoritative = SignalGarden.Sim.PNCounter.merge(state.pn_counter, counter)
+
+    {status, convergence_time} = rearm(state.status, state.convergence_time, bump_target?)
+
+    state = %{
+      state
+      | pn_adjustments_issued: issued,
+        pn_adjustments_total: total,
+        pn_adjustment_target: target,
+        pn_counter: authoritative,
+        latest: %{value: total, version: issued},
+        status: status,
+        convergence_time: convergence_time
+    }
+
+    nodes = put_in(state.nodes, [node, :known, state.origin], counter)
+    state = %{state | nodes: nodes}
+
+    state
+    |> refresh_all_informed()
+    |> log_adjust(node, amount)
+  end
+
+  defp preserve_pn_cell(current, authoritative, node, amount) when amount > 0 do
+    value = max(Map.get(current.positive, node, 0), Map.get(authoritative.positive, node, 0))
+    %{current | positive: Map.put(current.positive, node, value)}
+  end
+
+  defp preserve_pn_cell(current, authoritative, node, _amount) do
+    value = max(Map.get(current.negative, node, 0), Map.get(authoritative.negative, node, 0))
+    %{current | negative: Map.put(current.negative, node, value)}
+  end
+
   defp apply_increment(%__MODULE__{mode: :counter} = state, node, amount, bump_target?) do
     issued = state.increments_issued + 1
     total = state.increments_total + amount
@@ -987,6 +1095,15 @@ defmodule SignalGarden.Sim.Core do
     node.up and
       state.increments_issued >= state.increment_target and
       counter_total(node, state.origin) == state.increments_total
+  end
+
+  defp pn_counter_informed?(%__MODULE__{} = state, node_id) do
+    node = state.nodes[node_id]
+    known = get_in(node.known, [state.origin])
+
+    node.up and
+      state.pn_adjustments_issued >= state.pn_adjustment_target and
+      SignalGarden.Sim.PNCounter.equivalent?(known, state.pn_counter)
   end
 
   # ---------------------------------------------------------------------------
@@ -1284,6 +1401,10 @@ defmodule SignalGarden.Sim.Core do
     state.increments_issued >= state.increment_target
   end
 
+  defp fault_target_met?(%__MODULE__{mode: :pn_counter} = state) do
+    state.pn_adjustments_issued >= state.pn_adjustment_target
+  end
+
   defp fault_target_met?(%__MODULE__{mode: :set} = state) do
     state.adds_issued >= state.adds_target
   end
@@ -1314,6 +1435,9 @@ defmodule SignalGarden.Sim.Core do
 
   defp node_informed?(%__MODULE__{mode: :counter} = state, node_id),
     do: counter_informed?(state, node_id)
+
+  defp node_informed?(%__MODULE__{mode: :pn_counter} = state, node_id),
+    do: pn_counter_informed?(state, node_id)
 
   defp node_informed?(%__MODULE__{mode: :set} = state, node_id),
     do: set_informed?(state, node_id)
@@ -1469,6 +1593,10 @@ defmodule SignalGarden.Sim.Core do
       mode: state.mode,
       counter_total: state.increments_total,
       counter_writes: state.increments_issued,
+      pn_total: state.pn_adjustments_total,
+      pn_adjustments: state.pn_adjustments_issued,
+      pn_positive: pn_total(state.pn_counter.positive),
+      pn_negative: pn_total(state.pn_counter.negative),
       set_size: MapSet.size(state.elements),
       set_adds: state.adds_issued,
       set_elements: Enum.sort(MapSet.to_list(state.elements)),
@@ -1530,6 +1658,10 @@ defmodule SignalGarden.Sim.Core do
     Enum.sum(Map.values(node.known[origin].cells))
   end
 
+  defp node_value(%__MODULE__{mode: :pn_counter, origin: origin}, node) do
+    SignalGarden.Sim.PNCounter.value(node.known[origin])
+  end
+
   defp node_value(%__MODULE__{mode: :set, origin: origin}, node) do
     MapSet.size(node.known[origin].elements)
   end
@@ -1562,6 +1694,7 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp node_version(%__MODULE__{mode: :counter} = state, _node), do: state.increments_issued
+  defp node_version(%__MODULE__{mode: :pn_counter} = state, _node), do: state.pn_adjustments_issued
   defp node_version(%__MODULE__{mode: :set} = state, _node), do: state.adds_issued
   defp node_version(%__MODULE__{mode: :orset} = state, _node), do: state.orset_ops_issued
 
@@ -1641,6 +1774,8 @@ defmodule SignalGarden.Sim.Core do
       compacted: state.mv_compacted
     })
   end
+
+  defp pn_total(cells), do: cells |> Map.values() |> Enum.sum()
 
   defp edge_key({a, b}), do: edge_key(a, b)
 

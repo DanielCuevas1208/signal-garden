@@ -15,6 +15,7 @@ defmodule SignalGarden.Sim.Scenario do
     * `:register` - a last-writer-wins register, written by write fault actions
     * `:map` - a last-writer-wins map, written by put fault actions
     * `:mv_register` - a multi-value register, written by write fault actions
+    * `:pn_counter` - a positive-negative counter, changed by signed adjustments
 
   Counter mode swaps the rumor for a G-Counter CRDT. Each node keeps one cell
   per node id and merges peer state with element-wise max. The counter total
@@ -41,6 +42,10 @@ defmodule SignalGarden.Sim.Scenario do
   keeps the higher version for each key, so the newest write wins per key. A
   service board or a settings map spreads through the network and updates
   itself one key at a time.
+
+  PN-counter mode stores positive and negative grow-only cell maps. A signed
+  adjustment updates one cell, and a merge takes the maximum for each cell.
+  The visible balance equals the positive total minus the negative total.
   """
 
   defstruct id: :line,
@@ -59,7 +64,7 @@ defmodule SignalGarden.Sim.Scenario do
             map_keys: [],
             mode: :rumor
 
-  @type mode :: :rumor | :counter | :set | :orset | :register | :map | :mv_register
+  @type mode :: :rumor | :counter | :set | :orset | :register | :map | :mv_register | :pn_counter
 
   @type partition_change ::
           {:merge, :all}
@@ -74,6 +79,7 @@ defmodule SignalGarden.Sim.Scenario do
           | {:remove, pos_integer(), binary() | number()}
           | {:write, pos_integer(), binary() | number()}
           | {:put, pos_integer(), binary(), binary() | number()}
+          | {:adjust, pos_integer(), integer()}
   @type fault ::
           %{at: non_neg_integer(), action: partition_change(), label: String.t()}
 

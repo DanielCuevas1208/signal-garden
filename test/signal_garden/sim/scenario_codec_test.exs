@@ -433,6 +433,33 @@ defmodule SignalGarden.Sim.ScenarioCodecTest do
     assert run.(scenario).convergence_time == run.(decoded).convergence_time
   end
 
+  test ~S(the ledger file preserves signed adjustments) do
+    path = Path.join([:code.priv_dir(:signal_garden), ~S(scenarios), ~S(ledger.json)])
+    json = File.read!(path)
+    assert {:ok, scenario} = ScenarioCodec.decode(json)
+
+    assert scenario.id == :ledger
+    assert scenario.mode == :pn_counter
+    assert {:adjust, 1, 5} in Enum.map(scenario.fault_schedule, & &1.action)
+    assert {:adjust, 6, -2} in Enum.map(scenario.fault_schedule, & &1.action)
+
+    state =
+      scenario
+      |> Core.new()
+      |> Core.command({:set_status, :running})
+      |> then(fn state ->
+        Enum.reduce_while(1..10_000, state, fn _, acc ->
+          {acc, _} = Core.step(acc, 200)
+          if acc.status in [:converged, :exhausted], do: {:halt, acc}, else: {:cont, acc}
+        end)
+      end)
+
+    assert state.status == :converged
+    assert state.pn_adjustments_total == 1
+    assert state.pn_counter.positive == %{1 => 5, 9 => 3}
+    assert state.pn_counter.negative == %{1 => 1, 4 => 4, 6 => 2}
+  end
+
   test "files without a mode field decode as rumor mode" do
     scenario = %{Scenarios.line() | id: :custom_demo, name: "Legacy"}
     json = ScenarioCodec.encode(scenario)

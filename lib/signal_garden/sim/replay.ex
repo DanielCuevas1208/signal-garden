@@ -28,6 +28,10 @@ defmodule SignalGarden.Sim.Replay do
           dropped: non_neg_integer(),
           steps: non_neg_integer(),
           counter_total: non_neg_integer(),
+          pn_counter_total: integer(),
+          pn_positive_total: non_neg_integer(),
+          pn_negative_total: non_neg_integer(),
+          pn_adjustments: non_neg_integer(),
           set_size: non_neg_integer(),
           orset_size: non_neg_integer(),
           orset_adds: non_neg_integer(),
@@ -62,7 +66,10 @@ defmodule SignalGarden.Sim.Replay do
           mv_history_retained: boolean(),
           mv_history_compacted: boolean(),
           mv_values: boolean(),
-          map_fields: boolean()
+          map_fields: boolean(),
+          pn_counter: boolean(),
+          pn_positive: boolean(),
+          pn_negative: boolean()
         }
 
   @doc """
@@ -100,6 +107,10 @@ defmodule SignalGarden.Sim.Replay do
       dropped: core.dropped,
       steps: core.steps,
       counter_total: core.increments_total,
+      pn_counter_total: core.pn_adjustments_total,
+      pn_positive_total: pn_total(core.pn_counter.positive),
+      pn_negative_total: pn_total(core.pn_counter.negative),
+      pn_adjustments: core.pn_adjustments_issued,
       set_size: MapSet.size(core.elements),
       orset_size: MapSet.size(core.orset_elements),
       orset_adds: core.orset_adds_issued,
@@ -129,6 +140,8 @@ defmodule SignalGarden.Sim.Replay do
       %{key: key, value: value, version: version}
     end)
   end
+
+  defp pn_total(cells), do: cells |> Map.values() |> Enum.sum()
 
   defp mv_timeline(%Core{} = core) do
     SignalGarden.Sim.MultiValueRegister.timeline(%{
@@ -188,7 +201,10 @@ defmodule SignalGarden.Sim.Replay do
             entries: b.mv_entries,
             context: b.mv_context
           }),
-      map_fields: a.map_fields == b.map_fields
+      map_fields: a.map_fields == b.map_fields,
+      pn_counter: a.pn_counter == b.pn_counter,
+      pn_positive: a.pn_counter.positive == b.pn_counter.positive,
+      pn_negative: a.pn_counter.negative == b.pn_counter.negative
     }
   end
 
@@ -292,6 +308,7 @@ defmodule SignalGarden.Sim.Replay do
 
     case kind do
       :increment -> Map.put(base, :amount, entry.amount)
+      :adjusted -> Map.put(base, :amount, entry.amount)
       :added -> Map.put(base, :element, entry.element)
       :removed -> Map.put(base, :element, entry.element)
       :wrote -> Map.put(base, :value, entry.value)

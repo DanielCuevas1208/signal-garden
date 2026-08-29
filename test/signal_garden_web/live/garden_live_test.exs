@@ -99,6 +99,30 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert snapshot.counter_total == 1
   end
 
+  test ~S(pn counter mode shows signed adjustment control and applies a debit), %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p{/})
+
+    view
+    |> element(~S(#sg-form-scenario))
+    |> render_change(%{~S(scenario) => ~S(ledger)})
+
+    assert has_element?(view, ~S(#sg-form-adjust))
+    assert has_element?(view, ~S(#sg-pn-amount))
+    assert render(view) =~ ~S(nodes hold the final balance)
+    assert render(view) =~ ~S(Credits)
+    assert render(view) =~ ~S(Debits)
+
+    view
+    |> form(~S(#sg-form-adjust), %{~S(adjustment) => %{~S(amount) => ~S(-3)}})
+    |> render_submit()
+
+    snapshot = await_engine(fn snap -> snap.pn_adjustments == 1 end)
+    assert snapshot.mode == :pn_counter
+    assert snapshot.pn_adjustments == 1
+    assert snapshot.pn_total == -3
+    assert render(view) =~ ~S(adjusted -3)
+  end
+
   test "set mode shows the add control and adds an element", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
