@@ -173,6 +173,80 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     if snapshot.total == 0, do: 0, else: round(snapshot.reached * 100 / snapshot.total)
   end
 
+  def mode_label(:rumor), do: "Rumor"
+  def mode_label(:counter), do: "G-counter"
+  def mode_label(:set), do: "G-set"
+  def mode_label(:orset), do: "OR-set"
+  def mode_label(:register), do: "LWW register"
+  def mode_label(:map), do: "LWW map"
+  def mode_label(:mv_register), do: "MV-register"
+  def mode_label(:pn_counter), do: "PN-counter"
+  def mode_label(_mode), do: "Payload"
+
+  def comparison_side_label(:left), do: "Baseline"
+  def comparison_side_label(:right), do: "Alternative"
+
+  def comparison_outcome(%{mode: :rumor, latest_value: value}), do: "value #{value}"
+  def comparison_outcome(%{mode: :counter, counter_total: total}), do: "total #{total}"
+  def comparison_outcome(%{mode: :set, set_size: size}), do: "#{size} elements"
+  def comparison_outcome(%{mode: :orset, orset_size: size}), do: "#{size} members"
+  def comparison_outcome(%{mode: :register, register_value: nil}), do: "no notice"
+  def comparison_outcome(%{mode: :register, register_value: value}), do: ~s|notice "#{value}"|
+  def comparison_outcome(%{mode: :mv_register, mv_conflicts: count}), do: "#{count} concurrent values"
+  def comparison_outcome(%{mode: :map, map_size: size}), do: "#{size} services"
+  def comparison_outcome(%{mode: :pn_counter, pn_counter_total: total}), do: "balance #{total}"
+  def comparison_outcome(_summary), do: "not available"
+
+  def format_delta(nil), do: "n/a"
+  def format_delta(0), do: "0"
+  def format_delta(value) when value > 0, do: "+#{value}"
+  def format_delta(value), do: "#{value}"
+
+  def comparison_delta_text(nil, _suffix), do: "n/a"
+  def comparison_delta_text(value, suffix), do: format_delta(value) <> suffix
+
+  def comparison_delta_tone(nil), do: "sg-comparison__delta--neutral"
+  def comparison_delta_tone(0), do: "sg-comparison__delta--neutral"
+  def comparison_delta_tone(value) when value > 0, do: "sg-comparison__delta--higher"
+  def comparison_delta_tone(_value), do: "sg-comparison__delta--lower"
+
+  def comparison_trace(trace), do: Enum.take(trace, -8)
+
+  def comparison_event_label(%{kind: :increment, from: from, amount: amount}) do
+    "node #{from} wrote +#{amount}"
+  end
+
+  def comparison_event_label(%{kind: :adjusted, from: from, amount: amount}) do
+    "node #{from} adjusted #{amount}"
+  end
+
+  def comparison_event_label(%{kind: :added, from: from, element: element}) do
+    ~s|node #{from} added "#{element}"|
+  end
+
+  def comparison_event_label(%{kind: :removed, from: from, element: element}) do
+    ~s|node #{from} removed "#{element}"|
+  end
+
+  def comparison_event_label(%{kind: :wrote, from: from, value: value}) do
+    ~s|node #{from} posted "#{value}"|
+  end
+
+  def comparison_event_label(%{kind: :put, from: from, key: key, value: value}) do
+    "node #{from} set #{key} = #{value}"
+  end
+
+  def comparison_event_label(%{kind: kind, from: from, to: to})
+      when kind in [:deliver, :dropped_partition, :dropped_loss, :dropped_cut] do
+    "#{from} -> #{to} #{log_label(kind)}"
+  end
+
+  def comparison_event_label(%{kind: kind, from: from}) when kind in [:crashed, :restarted] do
+    "node #{from} #{log_label(kind)}"
+  end
+
+  def comparison_event_label(%{kind: kind}), do: log_label(kind)
+
   def mv_entry_class(%{visible: true}), do: ~S(sg-causal__entry sg-causal__entry--visible)
   def mv_entry_class(_entry), do: ~S(sg-causal__entry sg-causal__entry--resolved)
 
@@ -440,6 +514,189 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       </svg>
     </div>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # scenario comparison
+  # ---------------------------------------------------------------------------
+
+  attr :scenarios, :list, required: true
+  attr :comparison_form, :any, required: true
+  attr :comparison, :any, required: true
+
+  def comparison_panel(assigns) do
+    ~H"""
+    <section id="sg-comparison" class="sg-card sg-comparison">
+      <header class="sg-comparison__head">
+        <div>
+          <p class="sg-comparison__eyebrow">Deterministic evidence</p>
+          <h2 class="sg-card__title">Scenario comparison</h2>
+          <p class="sg-comparison__intro">
+            Replay two built-in scenarios and compare their final state, work, and recent trace.
+          </p>
+        </div>
+        <span class="sg-comparison__badge">right minus left</span>
+      </header>
+
+      <.form
+        for={@comparison_form}
+        id="sg-form-comparison"
+        phx-change="select_comparison"
+        phx-submit="compare_scenarios"
+        class="sg-comparison__form"
+      >
+        <div class="sg-comparison__field">
+          <label class="sg-form__label" for="sg-comparison-baseline">Baseline</label>
+          <.input
+            field={@comparison_form[:left]}
+            id="sg-comparison-baseline"
+            type="select"
+            options={comparison_options(@scenarios)}
+            class="sg-select"
+          />
+        </div>
+        <div class="sg-comparison__field">
+          <label class="sg-form__label" for="sg-comparison-alternative">Alternative</label>
+          <.input
+            field={@comparison_form[:right]}
+            id="sg-comparison-alternative"
+            type="select"
+            options={comparison_options(@scenarios)}
+            class="sg-select"
+          />
+        </div>
+        <button id="sg-compare" class="sg-btn sg-btn--solid" type="submit">
+          Compare traces
+        </button>
+      </.form>
+
+      <%= if @comparison == nil do %>
+        <div id="sg-comparison-empty" class="sg-comparison__empty">
+          <strong>Choose two runs.</strong>
+          <span>The comparison replays both scenarios from their fixed seeds.</span>
+        </div>
+      <% else %>
+        <div id="sg-comparison-results" class="sg-comparison__results">
+          <.comparison_side
+            side={:left}
+            summary={@comparison.left}
+            trace={@comparison.traces.left}
+          />
+          <.comparison_side
+            side={:right}
+            summary={@comparison.right}
+            trace={@comparison.traces.right}
+          />
+        </div>
+
+        <div id="sg-comparison-deltas" class="sg-comparison__deltas">
+          <div class="sg-comparison__delta-head">
+            <span>Difference</span>
+            <small>Alternative minus baseline</small>
+          </div>
+          <dl class="sg-comparison__delta-grid">
+            <div>
+              <dt>Convergence</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.convergence_time)}>
+                {comparison_delta_text(@comparison.deltas.convergence_time, " ms")}
+              </dd>
+            </div>
+            <div>
+              <dt>Hops</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.hops)}>
+                {format_delta(@comparison.deltas.hops)}
+              </dd>
+            </div>
+            <div>
+              <dt>Dropped</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.dropped)}>
+                {format_delta(@comparison.deltas.dropped)}
+              </dd>
+            </div>
+            <div>
+              <dt>Steps</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.steps)}>
+                {format_delta(@comparison.deltas.steps)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      <% end %>
+    </section>
+    """
+  end
+
+  attr :side, :atom, required: true
+  attr :summary, :map, required: true
+  attr :trace, :list, required: true
+
+  def comparison_side(assigns) do
+    events =
+      assigns.trace
+      |> comparison_trace()
+      |> Enum.with_index()
+
+    assigns = assign(assigns, :events, events)
+
+    ~H"""
+    <article id={"sg-comparison-#{@side}"} class="sg-comparison__side">
+      <header class="sg-comparison__side-head">
+        <div>
+          <span class="sg-comparison__side-label">{comparison_side_label(@side)}</span>
+          <h3 class="sg-comparison__name">{@summary.scenario}</h3>
+        </div>
+        <span class={"sg-comparison__mode #{status_tone(@summary.status)}"}>
+          {mode_label(@summary.mode)}
+        </span>
+      </header>
+
+      <p class="sg-comparison__description">{@summary.description}</p>
+
+      <dl class="sg-comparison__metrics">
+        <div>
+          <dt>Status</dt>
+          <dd>{status_label(@summary.status)}</dd>
+        </div>
+        <div>
+          <dt>Converged in</dt>
+          <dd>{format_time(@summary.convergence_time)}</dd>
+        </div>
+        <div>
+          <dt>Hops</dt>
+          <dd>{@summary.hops}</dd>
+        </div>
+        <div>
+          <dt>Dropped</dt>
+          <dd>{@summary.dropped}</dd>
+        </div>
+        <div class="sg-comparison__metric--wide">
+          <dt>Outcome</dt>
+          <dd>{comparison_outcome(@summary)}</dd>
+        </div>
+      </dl>
+
+      <div id={"sg-comparison-trace-#{@side}"} class="sg-comparison__trace">
+        <div class="sg-comparison__trace-head">
+          <h4>Recent trace</h4>
+          <span>{@summary.steps} steps</span>
+        </div>
+        <%= if @events == [] do %>
+          <p class="sg-comparison__empty">No events recorded.</p>
+        <% else %>
+          <ol class="sg-comparison__trace-list">
+            <li :for={{entry, index} <- @events} id={"sg-comparison-event-#{@side}-#{index}"}>
+              <span class="sg-comparison__trace-time">T={entry.t}</span>
+              <span>{comparison_event_label(entry)}</span>
+            </li>
+          </ol>
+        <% end %>
+      </div>
+    </article>
+    """
+  end
+
+  defp comparison_options(scenarios) do
+    Enum.map(scenarios, fn option -> {option.name, Atom.to_string(option.id)} end)
   end
 
   # ---------------------------------------------------------------------------

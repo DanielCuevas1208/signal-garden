@@ -11,6 +11,9 @@ The same scenario always produces the same event trace, convergence time, and
 history. Two runs with the same seed produce the same bytes. Anyone can replay
 the same fault on another machine.
 
+The comparison panel replays two built-in scenarios.
+It places outcomes, work, and recent events side by side.
+
 ## What it shows
 
 - An actor model gossip engine written in pure Elixir.
@@ -30,6 +33,7 @@ the same fault on another machine.
 - A live SVG graph, a convergence chart, and an event feed.
 - Causal-history compaction that removes resolved evidence without changing replicated values.
 - A headless replay tool that reproduces any run from the CLI.
+- A scenario comparison panel with paired outcomes and recent traces.
 
 ## Architecture
 
@@ -40,7 +44,7 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
-    replay.ex         # Headless runner. Drives scenarios and summarizes results.
+    replay.ex         # Headless runner and deterministic scenario comparison.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     multi_value_register.ex # Causal-dot merge rules and timeline evidence.
@@ -64,6 +68,9 @@ touches the network, so tests stay fast and deterministic.
 The `Replay` module drives the same core with no engine and no browser. It runs
 a scenario to completion and returns a summary. The `mix signal_garden.replay`
 task wraps it for the command line. See the "Headless replay" section below.
+
+The `Replay.compare/2` function runs two cores. It returns summaries, metric
+deltas, and rolling traces.
 
 MultiValueRegister.compact/1 removes resolved timeline entries. It keeps the causal context, so later merges cannot resurrect an observed write.
 
@@ -105,7 +112,9 @@ In MV-register mode, use **Compact resolved entries** to remove resolved timelin
 Use the **Node fault** box to crash a node or restart it. In counter mode, use
 the box to write to a node. In set mode, use the box to add a member. In
 register mode, use the box to post a notice. In map mode, use the box to set
-a service status. Use **Export JSON** to download
+a service status. Open **Scenario comparison** below the control room.
+Use it to compare two built-in replays.
+Use **Export JSON** to download
 the active scenario. Use **Import JSON** to paste a file and load it into the
 control room. Sample files ship at `priv/scenarios/ring.json`,
 `priv/scenarios/counter.json`, `priv/scenarios/set.json`,
@@ -318,6 +327,34 @@ Click **Compact resolved entries** to remove resolved timeline details. Active v
 The headless JSON summary reports `mv_timeline`, retained history, and compacted history counts.
 
 
+## Scenario comparison
+
+Open the **Scenario comparison** panel below the control room.
+
+Select a baseline and an alternative. Click **Compare traces**.
+
+The panel replays both scenarios from their fixed seeds. It shows status,
+convergence time, hops, drops, outcome, and the trailing event trace.
+
+The difference row uses alternative minus baseline. Positive values mean the
+alternative used more of that metric.
+
+The same comparison is available from Elixir:
+
+```elixir
+SignalGarden.Sim.compare(:ring, :cut)
+```
+
+Sample result:
+
+```
+baseline:    Ring         converged in 750 ms    hops 120   dropped 0
+alternative: Broken link  converged in 2822 ms  hops 382   dropped 45
+difference:  +2072 ms     +262 hops              +45 drops
+```
+
+Both traces remain available in `traces.left` and `traces.right`.
+
 ## Sample output
 
 The block below is real output from a deterministic run of every scenario. It
@@ -475,15 +512,13 @@ Run the full suite:
 mix test
 ```
 
-The suite has 226 tests. It covers the deterministic core, the counter CRDT,
-the set CRDT, the OR-set CRDT, the register CRDT, the map CRDT, the MV-register,
-the PN-counter,
-the topology builder, the scenario codec, and the scenario catalog. It also
-covers link cuts, the engine GenServer, the LiveView, and the headless replay tool. Tests
-never sleep and never read the wall clock. Each core test replays a scenario
-and asserts on the resulting state.
+The suite has 229 tests. It covers the deterministic core and each CRDT.
+It covers topology, scenario codecs, the catalog, link cuts, the engine,
+the LiveView, scenario comparison, and headless replay.
+Tests never sleep or read the wall clock. Each core test replays a scenario
+and checks the resulting state.
 
-All 226 tests pass in this checkout.
+All 229 tests pass in this checkout.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -509,7 +544,7 @@ A debit does not erase an earlier credit.
 - The MV-register keeps concurrent branches and a causal timeline. Compaction removes resolved timeline details; causal context remains.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
-- Imported scenarios use a custom topology. They do not appear in the catalog list.
+- Imported scenarios use a custom topology. They do not appear in the catalog list or comparison picker.
 - The event trace is a rolling window of the 80 most recent events, not the full run.
 
 ## Roadmap
@@ -529,7 +564,8 @@ Later releases can build on this core without changing the model.
 - **Richer conflict timeline.** Done. MV-register snapshots show active dots, resolved dots, and observed writes.
 - **Causal history compaction.** Done. Resolved timeline entries can be removed while causal context remains.
 - **More CRDTs.** Done. The Balance ledger adds a PN-counter with signed adjustments.
-- **Scenario comparison.** Next: compare two deterministic traces side by side.
+- **Scenario comparison.** Done. Compare built-in deterministic traces side by side in the control room.
+- **Scriptable comparison output.** Next: add a CLI option for paired replay summaries and traces.
 
 ## License
 

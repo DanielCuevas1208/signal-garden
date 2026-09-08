@@ -424,6 +424,35 @@ defmodule SignalGardenWeb.GardenLiveTest do
     assert Enum.any?(snapshot.edges, & &1.cut)
   end
 
+  test "compares two built-in scenarios and shows their traces side by side", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#sg-comparison")
+    assert has_element?(view, "#sg-comparison-baseline")
+    assert has_element?(view, "#sg-comparison-alternative")
+    assert has_element?(view, "#sg-compare")
+    assert has_element?(view, "#sg-comparison-empty")
+
+    view
+    |> form("#sg-form-comparison", %{comparison: %{left: "ring", right: "cut"}})
+    |> render_submit()
+
+    assert has_element?(view, "#sg-comparison-results")
+    assert has_element?(view, "#sg-comparison-left")
+    assert has_element?(view, "#sg-comparison-right")
+    assert has_element?(view, "#sg-comparison-trace-left")
+    assert has_element?(view, "#sg-comparison-trace-right")
+    assert has_element?(view, "#sg-comparison-deltas")
+    assert render(view) =~ "Alternative minus baseline"
+
+    view
+    |> element("#sg-form-comparison")
+    |> render_change(%{comparison: %{left: "ring", right: "line"}})
+
+    assert has_element?(view, "#sg-comparison-empty")
+    refute has_element?(view, "#sg-comparison-results")
+  end
+
   # The LiveView sends engine commands as fire-and-forget casts. Poll the
   # engine until the latest snapshot matches so an assertion never reads the
   # state before the cast in transit is applied.

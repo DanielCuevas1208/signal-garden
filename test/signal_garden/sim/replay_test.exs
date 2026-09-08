@@ -185,6 +185,33 @@ defmodule SignalGarden.Sim.ReplayTest do
     end
   end
 
+  describe "compare/2" do
+    test "returns deterministic summaries, metric deltas, and trailing traces" do
+      comparison = Replay.compare(:ring, :cut)
+
+      assert comparison.left.id == :ring
+      assert comparison.right.id == :cut
+      assert comparison.left.description == Scenarios.ring().description
+      assert comparison.left.latest_value == Scenarios.ring().latest_value
+      assert comparison.right.latest_value == Scenarios.cut().latest_value
+      assert comparison.deltas.convergence_time ==
+               comparison.right.convergence_time - comparison.left.convergence_time
+      assert comparison.deltas.dropped > 0
+      assert comparison.traces.left != []
+      assert comparison.traces.right != []
+      assert Enum.all?(comparison.traces.left, &Map.has_key?(&1, :kind))
+      assert Enum.all?(comparison.traces.right, &Map.has_key?(&1, :kind))
+    end
+
+    test "comparing a scenario with itself produces equal evidence" do
+      comparison = Replay.compare(:ring, :ring)
+
+      assert comparison.deltas == %{convergence_time: 0, hops: 0, dropped: 0, steps: 0}
+      assert comparison.traces.left == comparison.traces.right
+      assert comparison.left == comparison.right
+    end
+  end
+
   describe "scenario_from_file/1" do
     test "reads and decodes a scenario file" do
       assert {:ok, scenario} = Replay.scenario_from_file(@sample_path)

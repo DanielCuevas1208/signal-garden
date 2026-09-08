@@ -19,9 +19,11 @@ defmodule SignalGarden.Sim.Replay do
 
   @type summary :: %{
           scenario: String.t(),
+          description: String.t(),
           id: atom(),
           mode: Core.mode(),
           nodes: pos_integer(),
+          latest_value: binary() | number() | nil,
           status: Core.status(),
           convergence_time: non_neg_integer() | nil,
           hops: non_neg_integer(),
@@ -55,6 +57,7 @@ defmodule SignalGarden.Sim.Replay do
           scenario: String.t(),
           id: atom(),
           convergence_time: boolean(),
+          latest_value: boolean(),
           hops: boolean(),
           dropped: boolean(),
           steps: boolean(),
@@ -70,6 +73,18 @@ defmodule SignalGarden.Sim.Replay do
           pn_counter: boolean(),
           pn_positive: boolean(),
           pn_negative: boolean()
+        }
+
+  @type comparison :: %{
+          left: summary(),
+          right: summary(),
+          deltas: %{
+            convergence_time: integer() | nil,
+            hops: integer(),
+            dropped: integer(),
+            steps: integer()
+          },
+          traces: %{left: [event()], right: [event()]}
         }
 
   @doc """
@@ -98,8 +113,10 @@ defmodule SignalGarden.Sim.Replay do
   def summarize(%Core{} = core) do
     %{
       scenario: core.scenario.name,
+      description: core.scenario.description,
       id: core.scenario.id,
       mode: core.scenario.mode,
+      latest_value: core.latest.value,
       nodes: map_size(core.nodes),
       status: core.status,
       convergence_time: core.convergence_time,
@@ -143,6 +160,9 @@ defmodule SignalGarden.Sim.Replay do
 
   defp pn_total(cells), do: cells |> Map.values() |> Enum.sum()
 
+  defp delta(left, right) when is_integer(left) and is_integer(right), do: right - left
+  defp delta(_left, _right), do: nil
+
   defp mv_timeline(%Core{} = core) do
     SignalGarden.Sim.MultiValueRegister.timeline(%{
       entries: core.mv_entries,
@@ -155,6 +175,33 @@ defmodule SignalGarden.Sim.Replay do
   @doc "Summaries for every catalog scenario, in catalog order."
   @spec summaries() :: [summary()]
   def summaries, do: Enum.map(run_all(), &summarize/1)
+
+  @doc "Run two targets and return their summaries, metric deltas, and traces."
+  @spec compare(
+          Scenario.t() | atom() | String.t() | Path.t(),
+          Scenario.t() | atom() | String.t() | Path.t()
+        ) :: comparison()
+  def compare(left, right) do
+    left_core = run(left)
+    right_core = run(right)
+    left_summary = summarize(left_core)
+    right_summary = summarize(right_core)
+
+    %{
+      left: left_summary,
+      right: right_summary,
+      deltas: %{
+        convergence_time: delta(left_summary.convergence_time, right_summary.convergence_time),
+        hops: right_summary.hops - left_summary.hops,
+        dropped: right_summary.dropped - left_summary.dropped,
+        steps: right_summary.steps - left_summary.steps
+      },
+      traces: %{
+        left: recent_trace(left_core),
+        right: recent_trace(right_core)
+      }
+    }
+  end
 
   @doc """
   The recent event trace for a scenario, oldest first.
@@ -181,6 +228,7 @@ defmodule SignalGarden.Sim.Replay do
       scenario: scenario.name,
       id: scenario.id,
       convergence_time: a.convergence_time == b.convergence_time,
+      latest_value: a.latest == b.latest,
       hops: a.hops == b.hops,
       dropped: a.dropped == b.dropped,
       steps: a.steps == b.steps,

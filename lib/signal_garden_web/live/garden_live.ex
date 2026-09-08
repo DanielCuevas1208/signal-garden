@@ -23,6 +23,7 @@ defmodule SignalGardenWeb.GardenLive do
     end
 
     snapshot = Sim.snapshot()
+    {compare_left, compare_right} = comparison_defaults(snapshot.scenario.id)
 
     socket =
       socket
@@ -30,6 +31,10 @@ defmodule SignalGardenWeb.GardenLive do
       |> assign(:snapshot, snapshot)
       |> assign(:scenarios, Enum.map(Scenarios.catalog(), &scenario_option/1))
       |> assign(:selected_scenario, snapshot.scenario.id)
+      |> assign(:compare_left, compare_left)
+      |> assign(:compare_right, compare_right)
+      |> assign(:comparison_form, comparison_form(compare_left, compare_right))
+      |> assign(:comparison, nil)
       |> assign(:canvas, {@canvas_width, @canvas_height})
       |> assign(:delay_value, delay_to_form(snapshot.delay_ms))
       |> assign(:drop_value, round(snapshot.drop_prob * 100))
@@ -81,9 +86,36 @@ defmodule SignalGardenWeb.GardenLive do
   end
 
   def handle_event("select_scenario", %{"scenario" => id}, socket) do
-    id = String.to_existing_atom(id)
-    Sim.load_scenario(id)
-    {:noreply, assign(socket, :selected_scenario, id)}
+    case catalog_scenario_id(id) do
+      nil ->
+        {:noreply, socket}
+
+      scenario_id ->
+        Sim.load_scenario(scenario_id)
+        {:noreply, assign(socket, :selected_scenario, scenario_id)}
+    end
+  end
+
+  def handle_event("select_comparison", %{"comparison" => params}, socket) do
+    left = comparison_scenario_id(Map.get(params, "left"), socket.assigns.compare_left)
+    right = comparison_scenario_id(Map.get(params, "right"), socket.assigns.compare_right)
+
+    {:noreply,
+     socket
+     |> assign_comparison(left, right)
+     |> assign(:comparison, nil)}
+  end
+
+  def handle_event("compare_scenarios", params, socket) do
+    params = Map.get(params, "comparison", params)
+    left = comparison_scenario_id(Map.get(params, "left"), socket.assigns.compare_left)
+    right = comparison_scenario_id(Map.get(params, "right"), socket.assigns.compare_right)
+    comparison = Sim.compare(left, right)
+
+    {:noreply,
+     socket
+     |> assign_comparison(left, right)
+     |> assign(:comparison, comparison)}
   end
 
   def handle_event("set_delay", %{"delay" => value}, socket) do
@@ -269,6 +301,38 @@ defmodule SignalGardenWeb.GardenLive do
   # ---------------------------------------------------------------------------
   # helpers
   # ---------------------------------------------------------------------------
+
+  defp comparison_form(left, right) do
+    Phoenix.Component.to_form(
+      %{"left" => Atom.to_string(left), "right" => Atom.to_string(right)},
+      as: :comparison
+    )
+  end
+
+  defp assign_comparison(socket, left, right) do
+    socket
+    |> assign(:compare_left, left)
+    |> assign(:compare_right, right)
+    |> assign(:comparison_form, comparison_form(left, right))
+  end
+
+  defp comparison_defaults(id) do
+    left = if Scenarios.fetch(id), do: id, else: :ring
+    right = if left == :cut, do: :ring, else: :cut
+    {left, right}
+  end
+
+  defp catalog_scenario_id(value) when is_binary(value) do
+    Enum.find_value(Scenarios.catalog(), fn scenario ->
+      if Atom.to_string(scenario.id) == value, do: scenario.id
+    end)
+  end
+
+  defp catalog_scenario_id(_value), do: nil
+
+  defp comparison_scenario_id(value, fallback) do
+    catalog_scenario_id(value) || fallback
+  end
 
   defp pn_form(value \\ ~S()) do
     Phoenix.Component.to_form(%{~S(amount) => value}, as: :adjustment)

@@ -32,6 +32,9 @@ defmodule SignalGarden.Sim do
     end
   end
 
+  @doc "Compare two scenarios with deterministic replay."
+  def compare(left, right), do: SignalGarden.Sim.Replay.compare(left, right)
+
   @doc "Start the animation loop if the core is idle or paused."
   def start_run, do: Engine.start_run()
 
