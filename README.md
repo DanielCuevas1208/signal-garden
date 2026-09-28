@@ -444,6 +444,7 @@ path to run a single scenario. Add an option to change the output:
 | --- | --- |
 | `--json` | One JSON document with a summary per scenario |
 | `--trace` | The recent event trace as JSON |
+| `--compare left right` | Paired summaries, deltas, and recent traces as JSON |
 | `--check` | A determinism check for one scenario |
 | `--check-all` | A determinism check for every scenario |
 | `--help` | Usage text |
@@ -451,6 +452,26 @@ path to run a single scenario. Add an option to change the output:
 A determinism check runs the scenario twice and compares the outcomes. It
 prints one line per scenario. It exits non-zero when a run is not
 reproducible. The CI workflow runs `--check-all` on every push.
+
+Compare two scenarios from a shell or another script:
+
+```
+mix signal_garden.replay --compare ring cut
+```
+
+The command returns one JSON object with both summaries, right-minus-left
+deltas, and the rolling trace for each scenario. Select a compact view with `jq`:
+
+```
+mix signal_garden.replay --compare ring cut | jq '{left: .left.id, right: .right.id, deltas: .deltas}'
+{
+  "left": "ring",
+  "right": "cut",
+  "deltas": {"convergence_time": 2072, "hops": 262, "dropped": 45, "steps": 573}
+}
+```
+
+The trace remains limited to the core's most recent 80 events.
 
 ## Status model
 
@@ -512,13 +533,13 @@ Run the full suite:
 mix test
 ```
 
-The suite has 229 tests. It covers the deterministic core and each CRDT.
+The suite has 231 tests. It covers the deterministic core and each CRDT.
 It covers topology, scenario codecs, the catalog, link cuts, the engine,
 the LiveView, scenario comparison, and headless replay.
 Tests never sleep or read the wall clock. Each core test replays a scenario
 and checks the resulting state.
 
-All 229 tests pass in this checkout.
+All 231 tests pass in this checkout.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -565,7 +586,8 @@ Later releases can build on this core without changing the model.
 - **Causal history compaction.** Done. Resolved timeline entries can be removed while causal context remains.
 - **More CRDTs.** Done. The Balance ledger adds a PN-counter with signed adjustments.
 - **Scenario comparison.** Done. Compare built-in deterministic traces side by side in the control room.
-- **Scriptable comparison output.** Next: add a CLI option for paired replay summaries and traces.
+- **Scriptable comparison output.** Done. `--compare left right` emits paired JSON evidence for scripts and CI.
+- **Full-run trace export.** Next: add an opt-in artifact for traces longer than the rolling interface window.
 
 ## License
 
