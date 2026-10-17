@@ -17,6 +17,7 @@ defmodule Mix.Tasks.SignalGarden.Replay do
       mix signal_garden.replay --json
       mix signal_garden.replay --json ring
       mix signal_garden.replay --trace ring
+      mix signal_garden.replay --compare ring cut
       mix signal_garden.replay --check ring
       mix signal_garden.replay --check-all
 
@@ -25,9 +26,12 @@ defmodule Mix.Tasks.SignalGarden.Replay do
 
     * `--json` - print summaries as one JSON document
     * `--trace` - print the recent event trace as JSON
+    * `--compare` - print paired summaries, metric deltas, and traces as JSON
     * `--check` - run a scenario twice and compare the outcomes
     * `--check-all` - run a determinism check for every catalog scenario
     * `--help` - print this help text
+
+  The `--compare` option expects exactly two scenario ids or JSON file paths.
 
   The exit status is zero on success. A failed determinism check or a load
   error returns a non-zero exit status, which suits scripted checks.
@@ -40,6 +44,7 @@ defmodule Mix.Tasks.SignalGarden.Replay do
   @switches [
     json: :boolean,
     trace: :boolean,
+    compare: :boolean,
     check: :boolean,
     check_all: :boolean,
     help: :boolean
@@ -63,6 +68,9 @@ defmodule Mix.Tasks.SignalGarden.Replay do
 
       opts[:check_all] ->
         run_check_all()
+
+      opts[:compare] ->
+        run_compare(positional)
 
       opts[:check] ->
         run_check(positional)
@@ -107,6 +115,17 @@ defmodule Mix.Tasks.SignalGarden.Replay do
       end
 
     IO.puts(Jason.encode!(summaries, pretty: true))
+  end
+
+  defp run_compare([left, right]) do
+    left
+    |> Replay.compare(right)
+    |> Jason.encode!(pretty: true)
+    |> IO.puts()
+  end
+
+  defp run_compare(_targets) do
+    raise ArgumentError, "--compare expects exactly two scenario ids or JSON file paths"
   end
 
   defp run_trace(targets) do

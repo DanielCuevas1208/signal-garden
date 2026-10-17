@@ -1,0 +1,189 @@
+{
+  "delay_ms": [
+    25,
+    55
+  ],
+  "description": "Twelve nodes replicate an LWW register. Notices overwrite on a schedule.",
+  "drop_prob": 0.05,
+  "fault_schedule": [
+    {
+      "action": "write",
+      "at": 400,
+      "label": "Node 1 posts System online",
+      "node": 1,
+      "value": "System online"
+    },
+    {
+      "action": "write",
+      "at": 900,
+      "label": "Node 6 posts Deploy started",
+      "node": 6,
+      "value": "Deploy started"
+    },
+    {
+      "action": "write",
+      "at": 1500,
+      "label": "Node 9 posts Queue backed up",
+      "node": 9,
+      "value": "Queue backed up"
+    },
+    {
+      "action": "write",
+      "at": 2200,
+      "label": "Node 4 posts Queue drained",
+      "node": 4,
+      "value": "Queue drained"
+    },
+    {
+      "action": "write",
+      "at": 2800,
+      "label": "Node 1 posts All systems nominal",
+      "node": 1,
+      "value": "All systems nominal"
+    }
+  ],
+  "format": 1,
+  "gossip_interval_ms": 70,
+  "id": "bulletin",
+  "latest_value": 0,
+  "link_cuts": [],
+  "mode": "register",
+  "name": "Bulletin board",
+  "origin": 1,
+  "partitions": {},
+  "seed": 44,
+  "topology": {
+    "edges": [
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        10
+      ],
+      [
+        1,
+        11
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        4,
+        11
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        6,
+        11
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        8,
+        10
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        10,
+        11
+      ],
+      [
+        11,
+        12
+      ]
+    ],
+    "id": "random",
+    "label": "random 12/3",
+    "layout": {
+      "1": [
+        0.5945705399429897,
+        0.4822791455180386
+      ],
+      "10": [
+        0.6991780708448856,
+        0.7278339600333814
+      ],
+      "11": [
+        0.6174645059012618,
+        0.6773841091931797
+      ],
+      "12": [
+        0.6837741777899756,
+        0.8015173030421813
+      ],
+      "2": [
+        0.6437847603447243,
+        0.4885519873280616
+      ],
+      "3": [
+        0.5176282111982347,
+        0.7017516509734009
+      ],
+      "4": [
+        0.4306054669715369,
+        0.6995459548142203
+      ],
+      "5": [
+        0.46241761445622936,
+        0.5189642320018807
+      ],
+      "6": [
+        0.5753909525746348,
+        0.5729733909599539
+      ],
+      "7": [
+        0.5680533922092085,
+        0.6513321891316235
+      ],
+      "8": [
+        0.4652199646237968,
+        0.5243928676447008
+      ],
+      "9": [
+        0.7848417563005032,
+        0.4936642794504902
+      ]
+    },
+    "nodes": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ]
+  }
+}

@@ -37,6 +37,24 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
     assert Enum.all?(trace, &Map.has_key?(&1, "kind"))
   end
 
+  test "emits paired summaries, deltas, and traces as JSON" do
+    output = capture_io(fn -> Replay.run(["--compare", "ring", "cut"]) end)
+
+    assert {:ok, comparison} = Jason.decode(output)
+    assert comparison["left"]["id"] == "ring"
+    assert comparison["right"]["id"] == "cut"
+    assert is_integer(comparison["deltas"]["hops"])
+    assert is_list(comparison["traces"]["left"])
+    assert is_list(comparison["traces"]["right"])
+  end
+
+  test "documents the paired comparison option" do
+    output = capture_io(fn -> Replay.run(["--help"]) end)
+
+    assert output =~ "--compare"
+    assert output =~ "exactly two"
+  end
+
   test "a determinism check prints an ok line" do
     output = capture_io(fn -> Replay.run(["--check", "ring"]) end)
     assert output =~ "ok"

@@ -32,6 +32,9 @@ defmodule SignalGarden.Sim do
     end
   end
 
+  @doc "Compare two scenarios with deterministic replay."
+  def compare(left, right), do: SignalGarden.Sim.Replay.compare(left, right)
+
   @doc "Start the animation loop if the core is idle or paused."
   def start_run, do: Engine.start_run()
 
@@ -62,6 +65,15 @@ defmodule SignalGarden.Sim do
   @doc "Toggle a node between group zero and group one."
   def toggle_partition(node), do: Engine.toggle_partition(node)
 
+  @doc "Cut the link between two nodes, dropping every message across it."
+  def cut_link(a, b), do: Engine.cut_link(a, b)
+
+  @doc "Restore the link between two nodes."
+  def heal_link(a, b), do: Engine.heal_link(a, b)
+
+  @doc "Toggle whether the link between two nodes is cut."
+  def toggle_link_cut(a, b), do: Engine.toggle_link_cut(a, b)
+
   @doc "Take a node out of service until it is restarted."
   def crash(node), do: Engine.crash(node)
 
@@ -70,6 +82,24 @@ defmodule SignalGarden.Sim do
 
   @doc "Add `amount` to a node's counter cell in counter mode."
   def increment(node, amount \\ 1), do: Engine.increment(node, amount)
+
+  @doc "Apply a signed adjustment to a node's PN-counter cell."
+  def adjust(node, amount), do: Engine.adjust(node, amount)
+
+  @doc "Add an element to a node's set in set or orset mode."
+  def add(node, element), do: Engine.add(node, element)
+
+  @doc "Remove an element from a node's observed-remove set in orset mode."
+  def remove(node, element), do: Engine.remove(node, element)
+
+  @doc "Write a value to a node's register in register mode."
+  def write(node, value), do: Engine.write(node, value)
+
+  @doc "Set a key to a value on a node's map in map mode."
+  def put(node, key, value), do: Engine.put(node, key, value)
+
+  @doc "Compact resolved multi-value register history while preserving causal context."
+  def compact_mv_history, do: Engine.compact_mv_history()
 
   @doc "Heal all partitions."
   def merge, do: Engine.merge()

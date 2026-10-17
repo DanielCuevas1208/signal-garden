@@ -19,15 +19,36 @@ defmodule SignalGarden.Sim.Replay do
 
   @type summary :: %{
           scenario: String.t(),
+          description: String.t(),
           id: atom(),
           mode: Core.mode(),
           nodes: pos_integer(),
+          latest_value: binary() | number() | nil,
           status: Core.status(),
           convergence_time: non_neg_integer() | nil,
           hops: non_neg_integer(),
           dropped: non_neg_integer(),
           steps: non_neg_integer(),
-          counter_total: non_neg_integer()
+          counter_total: non_neg_integer(),
+          pn_counter_total: integer(),
+          pn_positive_total: non_neg_integer(),
+          pn_negative_total: non_neg_integer(),
+          pn_adjustments: non_neg_integer(),
+          set_size: non_neg_integer(),
+          orset_size: non_neg_integer(),
+          orset_adds: non_neg_integer(),
+          orset_removes: non_neg_integer(),
+          orset_elements: [binary() | number()],
+          register_value: binary() | number() | nil,
+          mv_writes: non_neg_integer(),
+          mv_conflicts: non_neg_integer(),
+          mv_values: [binary() | number()],
+          mv_timeline: [map()],
+          mv_history_retained: non_neg_integer(),
+          mv_history_compacted: non_neg_integer(),
+          map_writes: non_neg_integer(),
+          map_size: non_neg_integer(),
+          map_fields: [map()]
         }
 
   @type event :: map()
@@ -36,11 +57,34 @@ defmodule SignalGarden.Sim.Replay do
           scenario: String.t(),
           id: atom(),
           convergence_time: boolean(),
+          latest_value: boolean(),
           hops: boolean(),
           dropped: boolean(),
           steps: boolean(),
           history: boolean(),
-          event_log: boolean()
+          event_log: boolean(),
+          mv_entries: boolean(),
+          mv_context: boolean(),
+          mv_timeline: boolean(),
+          mv_history_retained: boolean(),
+          mv_history_compacted: boolean(),
+          mv_values: boolean(),
+          map_fields: boolean(),
+          pn_counter: boolean(),
+          pn_positive: boolean(),
+          pn_negative: boolean()
+        }
+
+  @type comparison :: %{
+          left: summary(),
+          right: summary(),
+          deltas: %{
+            convergence_time: integer() | nil,
+            hops: integer(),
+            dropped: integer(),
+            steps: integer()
+          },
+          traces: %{left: [event()], right: [event()]}
         }
 
   @doc """
@@ -69,21 +113,95 @@ defmodule SignalGarden.Sim.Replay do
   def summarize(%Core{} = core) do
     %{
       scenario: core.scenario.name,
+      description: core.scenario.description,
       id: core.scenario.id,
       mode: core.scenario.mode,
+      latest_value: core.latest.value,
       nodes: map_size(core.nodes),
       status: core.status,
       convergence_time: core.convergence_time,
       hops: core.hops,
       dropped: core.dropped,
       steps: core.steps,
-      counter_total: core.increments_total
+      counter_total: core.increments_total,
+      pn_counter_total: core.pn_adjustments_total,
+      pn_positive_total: pn_total(core.pn_counter.positive),
+      pn_negative_total: pn_total(core.pn_counter.negative),
+      pn_adjustments: core.pn_adjustments_issued,
+      set_size: MapSet.size(core.elements),
+      orset_size: MapSet.size(core.orset_elements),
+      orset_adds: core.orset_adds_issued,
+      orset_removes: core.orset_removes_issued,
+      orset_elements: Enum.sort(MapSet.to_list(core.orset_elements)),
+      register_value: core.register_value,
+      mv_writes: core.writes_issued,
+      mv_conflicts: map_size(core.mv_entries),
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: core.mv_entries,
+          context: core.mv_context
+        }),
+      mv_timeline: mv_timeline(core),
+      mv_history_retained: map_size(core.mv_history),
+      mv_history_compacted: MapSet.size(core.mv_compacted),
+      map_writes: core.writes_issued,
+      map_size: map_size(core.map_fields),
+      map_fields: summarize_map_fields(core.map_fields)
     }
+  end
+
+  defp summarize_map_fields(fields) do
+    fields
+    |> Enum.sort_by(fn {key, _field} -> key end)
+    |> Enum.map(fn {key, %{value: value, version: version}} ->
+      %{key: key, value: value, version: version}
+    end)
+  end
+
+  defp pn_total(cells), do: cells |> Map.values() |> Enum.sum()
+
+  defp delta(left, right) when is_integer(left) and is_integer(right), do: right - left
+  defp delta(_left, _right), do: nil
+
+  defp mv_timeline(%Core{} = core) do
+    SignalGarden.Sim.MultiValueRegister.timeline(%{
+      entries: core.mv_entries,
+      context: core.mv_context,
+      history: core.mv_history,
+      compacted: core.mv_compacted
+    })
   end
 
   @doc "Summaries for every catalog scenario, in catalog order."
   @spec summaries() :: [summary()]
   def summaries, do: Enum.map(run_all(), &summarize/1)
+
+  @doc "Run two targets and return their summaries, metric deltas, and traces."
+  @spec compare(
+          Scenario.t() | atom() | String.t() | Path.t(),
+          Scenario.t() | atom() | String.t() | Path.t()
+        ) :: comparison()
+  def compare(left, right) do
+    left_core = run(left)
+    right_core = run(right)
+    left_summary = summarize(left_core)
+    right_summary = summarize(right_core)
+
+    %{
+      left: left_summary,
+      right: right_summary,
+      deltas: %{
+        convergence_time: delta(left_summary.convergence_time, right_summary.convergence_time),
+        hops: right_summary.hops - left_summary.hops,
+        dropped: right_summary.dropped - left_summary.dropped,
+        steps: right_summary.steps - left_summary.steps
+      },
+      traces: %{
+        left: recent_trace(left_core),
+        right: recent_trace(right_core)
+      }
+    }
+  end
 
   @doc """
   The recent event trace for a scenario, oldest first.
@@ -110,11 +228,31 @@ defmodule SignalGarden.Sim.Replay do
       scenario: scenario.name,
       id: scenario.id,
       convergence_time: a.convergence_time == b.convergence_time,
+      latest_value: a.latest == b.latest,
       hops: a.hops == b.hops,
       dropped: a.dropped == b.dropped,
       steps: a.steps == b.steps,
       history: a.history == b.history,
-      event_log: a.event_log == b.event_log
+      event_log: a.event_log == b.event_log,
+      orset_elements: a.orset_elements == b.orset_elements,
+      mv_entries: a.mv_entries == b.mv_entries,
+      mv_context: a.mv_context == b.mv_context,
+      mv_timeline: mv_timeline(a) == mv_timeline(b),
+      mv_history_retained: map_size(a.mv_history) == map_size(b.mv_history),
+      mv_history_compacted: a.mv_compacted == b.mv_compacted,
+      mv_values:
+        SignalGarden.Sim.MultiValueRegister.values(%{
+          entries: a.mv_entries,
+          context: a.mv_context
+        }) ==
+          SignalGarden.Sim.MultiValueRegister.values(%{
+            entries: b.mv_entries,
+            context: b.mv_context
+          }),
+      map_fields: a.map_fields == b.map_fields,
+      pn_counter: a.pn_counter == b.pn_counter,
+      pn_positive: a.pn_counter.positive == b.pn_counter.positive,
+      pn_negative: a.pn_counter.negative == b.pn_counter.negative
     }
   end
 
@@ -209,8 +347,20 @@ defmodule SignalGarden.Sim.Replay do
   defp normalize_event(%{kind: kind} = entry) do
     base = %{t: entry.t, kind: kind, from: entry.from, to: entry.to, partition: entry.partition}
 
+    base =
+      if Map.has_key?(entry, :cut) do
+        Map.put(base, :cut, entry.cut)
+      else
+        base
+      end
+
     case kind do
       :increment -> Map.put(base, :amount, entry.amount)
+      :adjusted -> Map.put(base, :amount, entry.amount)
+      :added -> Map.put(base, :element, entry.element)
+      :removed -> Map.put(base, :element, entry.element)
+      :wrote -> Map.put(base, :value, entry.value)
+      :put -> Map.merge(base, %{key: entry.key, value: entry.value})
       _ -> base
     end
   end
