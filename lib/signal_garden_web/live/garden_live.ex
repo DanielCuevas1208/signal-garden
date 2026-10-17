@@ -279,6 +279,7 @@ defmodule SignalGardenWeb.GardenLive do
       {:noreply, socket}
     else
       Sim.adjust(socket.assigns.fault_node, amount)
+
       {:noreply,
        socket
        |> assign(:pn_form, pn_form())}

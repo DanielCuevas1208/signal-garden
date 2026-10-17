@@ -119,7 +119,8 @@ defmodule SignalGarden.Sim.MultiValueRegister do
 
   @doc "Return the number of timeline entries still retained for inspection."
   @spec retained_history_count(t()) :: non_neg_integer()
-  def retained_history_count(state), do: state |> normalize() |> Map.fetch!(:history) |> map_size()
+  def retained_history_count(state),
+    do: state |> normalize() |> Map.fetch!(:history) |> map_size()
 
   @spec values(t()) :: [value()]
   def values(%{entries: entries}) do

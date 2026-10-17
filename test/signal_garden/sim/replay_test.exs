@@ -194,8 +194,10 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert comparison.left.description == Scenarios.ring().description
       assert comparison.left.latest_value == Scenarios.ring().latest_value
       assert comparison.right.latest_value == Scenarios.cut().latest_value
+
       assert comparison.deltas.convergence_time ==
                comparison.right.convergence_time - comparison.left.convergence_time
+
       assert comparison.deltas.dropped > 0
       assert comparison.traces.left != []
       assert comparison.traces.right != []

@@ -192,7 +192,10 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def comparison_outcome(%{mode: :orset, orset_size: size}), do: "#{size} members"
   def comparison_outcome(%{mode: :register, register_value: nil}), do: "no notice"
   def comparison_outcome(%{mode: :register, register_value: value}), do: ~s|notice "#{value}"|
-  def comparison_outcome(%{mode: :mv_register, mv_conflicts: count}), do: "#{count} concurrent values"
+
+  def comparison_outcome(%{mode: :mv_register, mv_conflicts: count}),
+    do: "#{count} concurrent values"
+
   def comparison_outcome(%{mode: :map, map_size: size}), do: "#{size} services"
   def comparison_outcome(%{mode: :pn_counter, pn_counter_total: total}), do: "balance #{total}"
   def comparison_outcome(_summary), do: "not available"
@@ -896,7 +899,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         </.form>
 
         <%= if @snapshot.mode == :pn_counter do %>
-          <.form for={@pn_form} id={~S(sg-form-adjust)} phx-submit={~S(adjust_balance)} class={~S(sg-faults__form)}>
+          <.form
+            for={@pn_form}
+            id={~S(sg-form-adjust)}
+            phx-submit={~S(adjust_balance)}
+            class={~S(sg-faults__form)}
+          >
             <div class={~S(sg-faults__row)}>
               <.input
                 field={@pn_form[:amount]}
@@ -1267,7 +1275,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               <p class="sg-causal__note">{mv_entry_note(entry)}</p>
             </li>
           </ol>
-          <p class="sg-causal__legend">Active dots stay visible. Compacted dots remain in causal context.</p>
+          <p class="sg-causal__legend">
+            Active dots stay visible. Compacted dots remain in causal context.
+          </p>
         </div>
       <% end %>
 

@@ -308,7 +308,14 @@ defmodule SignalGarden.Sim.Core do
             %{origin => %{value: nil, version: 0}}
 
           :mv_register ->
-            %{origin => %{entries: %{}, context: MapSet.new(), history: %{}, compacted: MapSet.new()}}
+            %{
+              origin => %{
+                entries: %{},
+                context: MapSet.new(),
+                history: %{},
+                compacted: MapSet.new()
+              }
+            }
 
           :pn_counter ->
             %{origin => SignalGarden.Sim.PNCounter.new()}
@@ -1302,7 +1309,12 @@ defmodule SignalGarden.Sim.Core do
 
     target_state =
       SignalGarden.Sim.MultiValueRegister.merge(
-        %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history, compacted: state.mv_compacted},
+        %{
+          entries: state.mv_entries,
+          context: state.mv_context,
+          history: state.mv_history,
+          compacted: state.mv_compacted
+        },
         next
       )
 
@@ -1341,7 +1353,13 @@ defmodule SignalGarden.Sim.Core do
   defp mv_register_informed?(%__MODULE__{} = state, node_id) do
     node = state.nodes[node_id]
     known = get_in(node.known, [state.origin])
-    target = %{entries: state.mv_entries, context: state.mv_context, history: state.mv_history, compacted: state.mv_compacted}
+
+    target = %{
+      entries: state.mv_entries,
+      context: state.mv_context,
+      history: state.mv_history,
+      compacted: state.mv_compacted
+    }
 
     node.up and
       state.writes_issued >= state.writes_target and
@@ -1694,7 +1712,10 @@ defmodule SignalGarden.Sim.Core do
   end
 
   defp node_version(%__MODULE__{mode: :counter} = state, _node), do: state.increments_issued
-  defp node_version(%__MODULE__{mode: :pn_counter} = state, _node), do: state.pn_adjustments_issued
+
+  defp node_version(%__MODULE__{mode: :pn_counter} = state, _node),
+    do: state.pn_adjustments_issued
+
   defp node_version(%__MODULE__{mode: :set} = state, _node), do: state.adds_issued
   defp node_version(%__MODULE__{mode: :orset} = state, _node), do: state.orset_ops_issued
 

@@ -443,6 +443,7 @@ defmodule SignalGarden.Scenarios do
   @doc "A random graph that replicates a positive-negative counter."
   def ledger do
     topology = Topology.random(12, 3, 88)
+
     %Scenario{
       id: :ledger,
       name: "Balance ledger",
