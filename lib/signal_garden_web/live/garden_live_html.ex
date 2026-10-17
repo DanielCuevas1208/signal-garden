@@ -63,10 +63,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     partitioned = edge.partitioned
 
     cond do
+      edge.cut -> "#fb7185"
       partitioned and recent and kind == :deliver -> "#fca5a5"
       partitioned -> "#b45309"
       recent and kind == :deliver -> "#22d3ee"
-      recent and kind in [:dropped_loss, :dropped_partition] -> "#fb7185"
+      recent and kind in [:dropped_loss, :dropped_partition, :dropped_cut] -> "#fb7185"
       true -> "#334155"
     end
   end
@@ -75,6 +76,7 @@ defmodule SignalGardenWeb.GardenLiveHTML do
     recent = recent?(clock, edge.last_time)
 
     cond do
+      edge.cut -> "sg-edge-cut"
       recent and edge.last_kind == :deliver -> "sg-edge-flow"
       edge.partitioned -> "sg-edge-partitioned"
       true -> ""
@@ -82,7 +84,11 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   end
 
   def edge_width(edge, clock) do
-    if recent?(clock, edge.last_time), do: 2.6, else: 1.4
+    cond do
+      edge.cut -> 1.8
+      recent?(clock, edge.last_time) -> 2.6
+      true -> 1.4
+    end
   end
 
   def recent?(clock, time) when is_integer(clock) and is_integer(time) do
@@ -136,9 +142,15 @@ defmodule SignalGardenWeb.GardenLiveHTML do
       :deliver -> "text-cyan-300"
       :dropped_partition -> "text-amber-300"
       :dropped_loss -> "text-rose-300"
+      :dropped_cut -> "text-rose-300"
       :crashed -> "text-rose-400"
       :restarted -> "text-emerald-300"
       :increment -> "text-violet-300"
+      :added -> "text-fuchsia-300"
+      :removed -> "text-rose-300"
+      :wrote -> "text-amber-300"
+      :put -> "text-cyan-300"
+      :adjusted -> "text-violet-300"
       _ -> "text-slate-300"
     end
   end
@@ -146,13 +158,112 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   def log_label(:deliver), do: "delivered"
   def log_label(:dropped_partition), do: "dropped (partition)"
   def log_label(:dropped_loss), do: "dropped (loss)"
+  def log_label(:dropped_cut), do: "dropped (cut link)"
   def log_label(:crashed), do: "crashed"
   def log_label(:restarted), do: "restarted"
   def log_label(:increment), do: "wrote"
+  def log_label(:added), do: "added"
+  def log_label(:removed), do: "removed"
+  def log_label(:wrote), do: "posted"
+  def log_label(:put), do: "set"
+  def log_label(:adjusted), do: "adjusted"
   def log_label(_), do: "event"
 
   def reached_percent(snapshot) do
     if snapshot.total == 0, do: 0, else: round(snapshot.reached * 100 / snapshot.total)
+  end
+
+  def mode_label(:rumor), do: "Rumor"
+  def mode_label(:counter), do: "G-counter"
+  def mode_label(:set), do: "G-set"
+  def mode_label(:orset), do: "OR-set"
+  def mode_label(:register), do: "LWW register"
+  def mode_label(:map), do: "LWW map"
+  def mode_label(:mv_register), do: "MV-register"
+  def mode_label(:pn_counter), do: "PN-counter"
+  def mode_label(_mode), do: "Payload"
+
+  def comparison_side_label(:left), do: "Baseline"
+  def comparison_side_label(:right), do: "Alternative"
+
+  def comparison_outcome(%{mode: :rumor, latest_value: value}), do: "value #{value}"
+  def comparison_outcome(%{mode: :counter, counter_total: total}), do: "total #{total}"
+  def comparison_outcome(%{mode: :set, set_size: size}), do: "#{size} elements"
+  def comparison_outcome(%{mode: :orset, orset_size: size}), do: "#{size} members"
+  def comparison_outcome(%{mode: :register, register_value: nil}), do: "no notice"
+  def comparison_outcome(%{mode: :register, register_value: value}), do: ~s|notice "#{value}"|
+
+  def comparison_outcome(%{mode: :mv_register, mv_conflicts: count}),
+    do: "#{count} concurrent values"
+
+  def comparison_outcome(%{mode: :map, map_size: size}), do: "#{size} services"
+  def comparison_outcome(%{mode: :pn_counter, pn_counter_total: total}), do: "balance #{total}"
+  def comparison_outcome(_summary), do: "not available"
+
+  def format_delta(nil), do: "n/a"
+  def format_delta(0), do: "0"
+  def format_delta(value) when value > 0, do: "+#{value}"
+  def format_delta(value), do: "#{value}"
+
+  def comparison_delta_text(nil, _suffix), do: "n/a"
+  def comparison_delta_text(value, suffix), do: format_delta(value) <> suffix
+
+  def comparison_delta_tone(nil), do: "sg-comparison__delta--neutral"
+  def comparison_delta_tone(0), do: "sg-comparison__delta--neutral"
+  def comparison_delta_tone(value) when value > 0, do: "sg-comparison__delta--higher"
+  def comparison_delta_tone(_value), do: "sg-comparison__delta--lower"
+
+  def comparison_trace(trace), do: Enum.take(trace, -8)
+
+  def comparison_event_label(%{kind: :increment, from: from, amount: amount}) do
+    "node #{from} wrote +#{amount}"
+  end
+
+  def comparison_event_label(%{kind: :adjusted, from: from, amount: amount}) do
+    "node #{from} adjusted #{amount}"
+  end
+
+  def comparison_event_label(%{kind: :added, from: from, element: element}) do
+    ~s|node #{from} added "#{element}"|
+  end
+
+  def comparison_event_label(%{kind: :removed, from: from, element: element}) do
+    ~s|node #{from} removed "#{element}"|
+  end
+
+  def comparison_event_label(%{kind: :wrote, from: from, value: value}) do
+    ~s|node #{from} posted "#{value}"|
+  end
+
+  def comparison_event_label(%{kind: :put, from: from, key: key, value: value}) do
+    "node #{from} set #{key} = #{value}"
+  end
+
+  def comparison_event_label(%{kind: kind, from: from, to: to})
+      when kind in [:deliver, :dropped_partition, :dropped_loss, :dropped_cut] do
+    "#{from} -> #{to} #{log_label(kind)}"
+  end
+
+  def comparison_event_label(%{kind: kind, from: from}) when kind in [:crashed, :restarted] do
+    "node #{from} #{log_label(kind)}"
+  end
+
+  def comparison_event_label(%{kind: kind}), do: log_label(kind)
+
+  def mv_entry_class(%{visible: true}), do: ~S(sg-causal__entry sg-causal__entry--visible)
+  def mv_entry_class(_entry), do: ~S(sg-causal__entry sg-causal__entry--resolved)
+
+  def mv_entry_state(%{visible: true}), do: ~S(visible)
+  def mv_entry_state(_entry), do: ~S(resolved)
+
+  def mv_dot_label(%{node: node, sequence: sequence}), do: ~s(n#{node} · #{sequence})
+
+  def mv_entry_note(%{observed: observed, observed_by: observed_by}) do
+    cond do
+      observed != [] -> ~s|observes #{length(observed)} earlier dot(s)|
+      observed_by != [] -> ~s|resolved by #{length(observed_by)} later dot(s)|
+      true -> ~S(independent branch)
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -171,15 +282,35 @@ defmodule SignalGardenWeb.GardenLiveHTML do
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--pending"></i>pending</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--origin"></i>origin</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--split"></i>partitioned</span>
+          <span class="sg-legend__item"><i class="sg-swatch sg-swatch--cut"></i>cut link</span>
           <span class="sg-legend__item"><i class="sg-swatch sg-swatch--down"></i>crashed</span>
         </div>
         <p class="sg-graph__readout">
-          <%= if @snapshot.mode == :counter do %>
-            {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
-          <% else %>
-            {@snapshot.reached}/{@snapshot.total} nodes know the latest value
-            <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes at total {@snapshot.counter_total}
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :set -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full set
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :orset -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the current roster
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the latest notice
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :mv_register -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold all concurrent values
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :map -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the full map
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% :pn_counter -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes hold the final balance
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
+            <% _ -> %>
+              {@snapshot.reached}/{@snapshot.total} nodes know the latest value
+              <span class="sg-graph__percent">{reached_percent(@snapshot)}%</span>
           <% end %>
         </p>
       </div>
@@ -207,17 +338,43 @@ defmodule SignalGardenWeb.GardenLiveHTML do
               </defs>
 
               <g class="sg-edges">
-                <line
+                <g
                   :for={edge <- @snapshot.edges}
-                  x1={px(edge.a, sg, :x)}
-                  y1={px(edge.a, sg, :y)}
-                  x2={px(edge.b, sg, :x)}
-                  y2={px(edge.b, sg, :y)}
-                  class={"sg-edge #{edge_class(edge, sg.clock)}"}
-                  stroke={edge_stroke(edge, sg.clock)}
-                  stroke-width={edge_width(edge, sg.clock)}
-                  stroke-dasharray={edge.partitioned && "6 6"}
-                />
+                  class="sg-edge-wrap"
+                  phx-click="toggle_link_cut"
+                  phx-value-a={edge.a}
+                  phx-value-b={edge.b}
+                  role="button"
+                  tabindex="0"
+                  aria-label={"Toggle link #{edge.a} - #{edge.b}"}
+                >
+                  <line
+                    class="sg-edge__hit"
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                  />
+                  <line
+                    x1={px(edge.a, sg, :x)}
+                    y1={px(edge.a, sg, :y)}
+                    x2={px(edge.b, sg, :x)}
+                    y2={px(edge.b, sg, :y)}
+                    class={"sg-edge #{edge_class(edge, sg.clock)}"}
+                    stroke={edge_stroke(edge, sg.clock)}
+                    stroke-width={edge_width(edge, sg.clock)}
+                  />
+                  <%= if edge.cut do %>
+                    <g
+                      class="sg-edge__cutmark"
+                      transform={"translate(#{mx(edge, sg)} #{my(edge, sg)})"}
+                    >
+                      <circle r="7" class="sg-edge__cutdisc" />
+                      <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" class="sg-edge__cutcross" />
+                      <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" class="sg-edge__cutcross" />
+                    </g>
+                  <% end %>
+                </g>
               </g>
 
               <g class="sg-nodes">
@@ -276,13 +433,31 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   >
                     {node.id}
                   </text>
-                  <%= if sg.mode == :counter do %>
+                  <%= if sg.mode in [:counter, :set, :orset, :register] do %>
                     <text
                       x={px(node.id, sg, :x)}
                       y={py_value(node.id, sg)}
                       class="sg-node__value"
                     >
                       {node.value}
+                    </text>
+                  <% end %>
+                  <%= if sg.mode == :map do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
+                    </text>
+                  <% end %>
+                  <%= if sg.mode == :mv_register do %>
+                    <text
+                      x={px(node.id, sg, :x)}
+                      y={py_value(node.id, sg)}
+                      class="sg-node__value"
+                    >
+                      {node.value}/{node.version}
                     </text>
                   <% end %>
                 </g>
@@ -301,6 +476,9 @@ defmodule SignalGardenWeb.GardenLiveHTML do
 
   defp px(id, sg, :x), do: project(sg_layout(sg, id)) |> elem(0)
   defp px(id, sg, :y), do: project(sg_layout(sg, id)) |> elem(1)
+
+  defp mx(edge, sg), do: (px(edge.a, sg, :x) + px(edge.b, sg, :x)) / 2
+  defp my(edge, sg), do: (px(edge.a, sg, :y) + px(edge.b, sg, :y)) / 2
 
   defp py_label(id, sg) do
     project(sg_layout(sg, id)) |> elem(1) |> Kernel.+(node_radius() + 14)
@@ -342,6 +520,189 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   end
 
   # ---------------------------------------------------------------------------
+  # scenario comparison
+  # ---------------------------------------------------------------------------
+
+  attr :scenarios, :list, required: true
+  attr :comparison_form, :any, required: true
+  attr :comparison, :any, required: true
+
+  def comparison_panel(assigns) do
+    ~H"""
+    <section id="sg-comparison" class="sg-card sg-comparison">
+      <header class="sg-comparison__head">
+        <div>
+          <p class="sg-comparison__eyebrow">Deterministic evidence</p>
+          <h2 class="sg-card__title">Scenario comparison</h2>
+          <p class="sg-comparison__intro">
+            Replay two built-in scenarios and compare their final state, work, and recent trace.
+          </p>
+        </div>
+        <span class="sg-comparison__badge">right minus left</span>
+      </header>
+
+      <.form
+        for={@comparison_form}
+        id="sg-form-comparison"
+        phx-change="select_comparison"
+        phx-submit="compare_scenarios"
+        class="sg-comparison__form"
+      >
+        <div class="sg-comparison__field">
+          <label class="sg-form__label" for="sg-comparison-baseline">Baseline</label>
+          <.input
+            field={@comparison_form[:left]}
+            id="sg-comparison-baseline"
+            type="select"
+            options={comparison_options(@scenarios)}
+            class="sg-select"
+          />
+        </div>
+        <div class="sg-comparison__field">
+          <label class="sg-form__label" for="sg-comparison-alternative">Alternative</label>
+          <.input
+            field={@comparison_form[:right]}
+            id="sg-comparison-alternative"
+            type="select"
+            options={comparison_options(@scenarios)}
+            class="sg-select"
+          />
+        </div>
+        <button id="sg-compare" class="sg-btn sg-btn--solid" type="submit">
+          Compare traces
+        </button>
+      </.form>
+
+      <%= if @comparison == nil do %>
+        <div id="sg-comparison-empty" class="sg-comparison__empty">
+          <strong>Choose two runs.</strong>
+          <span>The comparison replays both scenarios from their fixed seeds.</span>
+        </div>
+      <% else %>
+        <div id="sg-comparison-results" class="sg-comparison__results">
+          <.comparison_side
+            side={:left}
+            summary={@comparison.left}
+            trace={@comparison.traces.left}
+          />
+          <.comparison_side
+            side={:right}
+            summary={@comparison.right}
+            trace={@comparison.traces.right}
+          />
+        </div>
+
+        <div id="sg-comparison-deltas" class="sg-comparison__deltas">
+          <div class="sg-comparison__delta-head">
+            <span>Difference</span>
+            <small>Alternative minus baseline</small>
+          </div>
+          <dl class="sg-comparison__delta-grid">
+            <div>
+              <dt>Convergence</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.convergence_time)}>
+                {comparison_delta_text(@comparison.deltas.convergence_time, " ms")}
+              </dd>
+            </div>
+            <div>
+              <dt>Hops</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.hops)}>
+                {format_delta(@comparison.deltas.hops)}
+              </dd>
+            </div>
+            <div>
+              <dt>Dropped</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.dropped)}>
+                {format_delta(@comparison.deltas.dropped)}
+              </dd>
+            </div>
+            <div>
+              <dt>Steps</dt>
+              <dd class={comparison_delta_tone(@comparison.deltas.steps)}>
+                {format_delta(@comparison.deltas.steps)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      <% end %>
+    </section>
+    """
+  end
+
+  attr :side, :atom, required: true
+  attr :summary, :map, required: true
+  attr :trace, :list, required: true
+
+  def comparison_side(assigns) do
+    events =
+      assigns.trace
+      |> comparison_trace()
+      |> Enum.with_index()
+
+    assigns = assign(assigns, :events, events)
+
+    ~H"""
+    <article id={"sg-comparison-#{@side}"} class="sg-comparison__side">
+      <header class="sg-comparison__side-head">
+        <div>
+          <span class="sg-comparison__side-label">{comparison_side_label(@side)}</span>
+          <h3 class="sg-comparison__name">{@summary.scenario}</h3>
+        </div>
+        <span class={"sg-comparison__mode #{status_tone(@summary.status)}"}>
+          {mode_label(@summary.mode)}
+        </span>
+      </header>
+
+      <p class="sg-comparison__description">{@summary.description}</p>
+
+      <dl class="sg-comparison__metrics">
+        <div>
+          <dt>Status</dt>
+          <dd>{status_label(@summary.status)}</dd>
+        </div>
+        <div>
+          <dt>Converged in</dt>
+          <dd>{format_time(@summary.convergence_time)}</dd>
+        </div>
+        <div>
+          <dt>Hops</dt>
+          <dd>{@summary.hops}</dd>
+        </div>
+        <div>
+          <dt>Dropped</dt>
+          <dd>{@summary.dropped}</dd>
+        </div>
+        <div class="sg-comparison__metric--wide">
+          <dt>Outcome</dt>
+          <dd>{comparison_outcome(@summary)}</dd>
+        </div>
+      </dl>
+
+      <div id={"sg-comparison-trace-#{@side}"} class="sg-comparison__trace">
+        <div class="sg-comparison__trace-head">
+          <h4>Recent trace</h4>
+          <span>{@summary.steps} steps</span>
+        </div>
+        <%= if @events == [] do %>
+          <p class="sg-comparison__empty">No events recorded.</p>
+        <% else %>
+          <ol class="sg-comparison__trace-list">
+            <li :for={{entry, index} <- @events} id={"sg-comparison-event-#{@side}-#{index}"}>
+              <span class="sg-comparison__trace-time">T={entry.t}</span>
+              <span>{comparison_event_label(entry)}</span>
+            </li>
+          </ol>
+        <% end %>
+      </div>
+    </article>
+    """
+  end
+
+  defp comparison_options(scenarios) do
+    Enum.map(scenarios, fn option -> {option.name, Atom.to_string(option.id)} end)
+  end
+
+  # ---------------------------------------------------------------------------
   # side panel
   # ---------------------------------------------------------------------------
 
@@ -352,6 +713,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
+  attr :pn_form, :any, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -366,6 +733,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
         drop_value={@drop_value}
         speed={@speed}
         fault_node={@fault_node}
+        fault_element={@fault_element}
+        pn_form={@pn_form}
+        map_keys={@map_keys}
+        fault_key={@fault_key}
+        link_edges={@link_edges}
+        link_edge={@link_edge}
         show_import={@show_import}
         import_json={@import_json}
       />
@@ -382,6 +755,12 @@ defmodule SignalGardenWeb.GardenLiveHTML do
   attr :drop_value, :any, required: true
   attr :speed, :any, required: true
   attr :fault_node, :any, required: true
+  attr :fault_element, :string, required: true
+  attr :pn_form, :any, required: true
+  attr :map_keys, :list, required: true
+  attr :fault_key, :string, required: true
+  attr :link_edges, :list, required: true
+  attr :link_edge, :string, required: true
   attr :show_import, :boolean, required: true
   attr :import_json, :string, required: true
 
@@ -518,19 +897,201 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <% end %>
           </div>
         </.form>
+
+        <%= if @snapshot.mode == :pn_counter do %>
+          <.form
+            for={@pn_form}
+            id={~S(sg-form-adjust)}
+            phx-submit={~S(adjust_balance)}
+            class={~S(sg-faults__form)}
+          >
+            <div class={~S(sg-faults__row)}>
+              <.input
+                field={@pn_form[:amount]}
+                id={~S(sg-pn-amount)}
+                type={~S(number)}
+                min={-20}
+                max={20}
+                step={1}
+                class={~S(sg-faults__input)}
+                placeholder={~S(+3 or -2)}
+                aria-label={~S(Signed balance adjustment)}
+              />
+              <button class={~S(sg-btn sg-btn--write)} type={~S(submit)}>Apply</button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode == :set do %>
+          <.form for={nil} id="sg-form-add" phx-submit="add_element" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-add-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to the set"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Add</button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode == :orset do %>
+          <.form for={nil} id="sg-form-orset" phx-submit="orset_op" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id="sg-orset-element"
+                name="element"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="member name"
+                aria-label="Element to add to or remove from the roster"
+              />
+              <button class="sg-btn sg-btn--write" type="submit" name="op" value="add">
+                Add
+              </button>
+              <button class="sg-btn sg-btn--fault" type="submit" name="op" value="remove">
+                Remove
+              </button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode in [:register, :mv_register] do %>
+          <.form for={nil} id="sg-form-write" phx-submit="publish_value" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <input
+                id={
+                  if(@snapshot.mode == :mv_register, do: "sg-mv-write-value", else: "sg-write-value")
+                }
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder={
+                  if(@snapshot.mode == :mv_register, do: "concurrent notice", else: "notice text")
+                }
+                aria-label={
+                  if(
+                    @snapshot.mode == :mv_register,
+                    do: "Value to write to the multi-value register",
+                    else: "Value to write to the register"
+                  )
+                }
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Publish</button>
+            </div>
+          </.form>
+        <% end %>
+
+        <%= if @snapshot.mode == :mv_register do %>
+          <div class="sg-faults sg-faults--compact">
+            <div class="sg-faults__head">Causal history</div>
+            <button
+              id="sg-compact-history"
+              class="sg-btn sg-btn--write"
+              type="button"
+              phx-click="compact_mv_history"
+            >
+              Compact resolved entries
+            </button>
+            <p class="sg-faults__note">
+              Keep active branches and causal context. Remove resolved timeline details.
+            </p>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :map do %>
+          <.form for={nil} id="sg-form-put" phx-submit="put_field" class="sg-faults__form">
+            <div class="sg-faults__row">
+              <select
+                id="sg-map-key"
+                name="key"
+                phx-change="select_map_key"
+                class="sg-faults__select"
+                aria-label="Key to write to the map"
+              >
+                <%= for key <- @map_keys do %>
+                  <option value={key} selected={key == @fault_key}>{key}</option>
+                <% end %>
+              </select>
+              <input
+                id="sg-put-value"
+                name="value"
+                type="text"
+                value={@fault_element}
+                class="sg-faults__input"
+                placeholder="status"
+                aria-label="Status to write for the selected key"
+              />
+              <button class="sg-btn sg-btn--write" type="submit">Set</button>
+            </div>
+          </.form>
+        <% end %>
+
         <p class="sg-faults__note">
-          <%= if @snapshot.mode == :counter do %>
-            Pick a node, then write to its counter cell or crash and restart it.
-          <% else %>
-            Pick a node, then crash or restart it while the run is active.
+          <%= case @snapshot.mode do %>
+            <% :counter -> %>
+              Pick a node, then write to its counter cell or crash and restart it.
+            <% :set -> %>
+              Pick a node, then add a member to its set or crash and restart it.
+            <% :orset -> %>
+              Pick a node, then add a member, remove a member, or crash and restart it.
+            <% :register -> %>
+              Pick a node, then post a notice or crash and restart it.
+            <% :mv_register -> %>
+              Pick a node, then post a notice or crash and restart it.
+            <% :map -> %>
+              Pick a node, then set a service status or crash and restart it.
+            <% :pn_counter -> %>
+              Pick a node, then apply a positive or negative balance change.
+            <% _ -> %>
+              Pick a node, then crash or restart it while the run is active.
           <% end %>
+        </p>
+      </div>
+
+      <div class="sg-faults">
+        <div class="sg-faults__head">Link cut</div>
+        <.form for={nil} id="sg-form-link" phx-change="select_link_edge" class="sg-faults__form">
+          <div class="sg-faults__row">
+            <select id="sg-link-edge" name="edge" class="sg-faults__select">
+              <%= for edge <- @link_edges do %>
+                <option value={edge.value} selected={edge.value == @link_edge}>
+                  {edge.label}
+                </option>
+              <% end %>
+            </select>
+            <button
+              class="sg-btn sg-btn--fault"
+              type="button"
+              phx-click="cut_link"
+              phx-value-edge={@link_edge}
+            >
+              Cut
+            </button>
+            <button
+              class="sg-btn sg-btn--heal"
+              type="button"
+              phx-click="heal_link"
+              phx-value-edge={@link_edge}
+            >
+              Heal
+            </button>
+          </div>
+        </.form>
+        <p class="sg-faults__note">
+          Pick an edge, then cut or heal it. Click any edge on the graph to toggle its cut.
         </p>
       </div>
 
       <div class="sg-controls__hint">
         Click a node to toggle its partition group. Click
         <button class="sg-link" phx-click="merge" type="button">heal</button>
-        to merge all groups.
+        to merge all groups and repair every cut link.
       </div>
 
       <div class="sg-share">
@@ -591,10 +1152,146 @@ defmodule SignalGardenWeb.GardenLiveHTML do
             <dt>Counter total</dt><dd>{@snapshot.counter_total}</dd>
           </div>
         <% end %>
+        <%= if @snapshot.mode == :set do %>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.set_adds}</dd>
+          </div>
+          <div>
+            <dt>Elements</dt><dd>{@snapshot.set_size}</dd>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :orset do %>
+          <div>
+            <dt>Ops</dt><dd>{@snapshot.orset_ops}</dd>
+          </div>
+          <div>
+            <dt>Adds</dt><dd>{@snapshot.orset_adds}</dd>
+          </div>
+          <div>
+            <dt>Removes</dt><dd>{@snapshot.orset_removes}</dd>
+          </div>
+          <div>
+            <dt>Members</dt><dd>{@snapshot.orset_size}</dd>
+          </div>
+        <% end %>
+        <%= if @snapshot.mode == :register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.register_writes}</dd>
+          </div>
+        <% end %>
+
+        <%= if @snapshot.mode == :mv_register do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.mv_writes}</dd>
+          </div>
+          <div>
+            <dt>Values</dt><dd>{@snapshot.mv_conflicts}</dd>
+          </div>
+          <div>
+            <dt>History retained</dt><dd>{@snapshot.mv_history_retained}</dd>
+          </div>
+          <div>
+            <dt>History compacted</dt><dd>{@snapshot.mv_history_compacted}</dd>
+          </div>
+        <% end %>
+
+        <%= if @snapshot.mode == :map do %>
+          <div>
+            <dt>Writes</dt><dd>{@snapshot.map_writes}</dd>
+          </div>
+          <div>
+            <dt>Services</dt><dd>{length(@snapshot.map_fields)}</dd>
+          </div>
+        <% end %>
         <div>
           <dt>Converged in</dt><dd>{format_time(@snapshot.convergence_time)}</dd>
         </div>
+        <%= if @snapshot.mode == :pn_counter do %>
+          <div>
+            <dt>Adjustments</dt><dd>{@snapshot.pn_adjustments}</dd>
+          </div>
+          <div>
+            <dt>Credits</dt><dd>{@snapshot.pn_positive}</dd>
+          </div>
+          <div>
+            <dt>Debits</dt><dd>{@snapshot.pn_negative}</dd>
+          </div>
+          <div>
+            <dt>Balance</dt><dd>{@snapshot.pn_total}</dd>
+          </div>
+        <% end %>
       </dl>
+
+      <%= if @snapshot.mode == :set and @snapshot.set_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Set contents</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.set_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :orset and @snapshot.orset_elements != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current roster</h3>
+          <ul class="sg-set__list">
+            <li :for={element <- @snapshot.orset_elements} class="sg-set__chip">
+              {element}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :register and @snapshot.register_value != nil do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Current notice</h3>
+          <p class="sg-register__value">{@snapshot.register_value}</p>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :mv_register and @snapshot.mv_values != [] do %>
+        <div class="sg-set sg-mv">
+          <h3 class="sg-card__title">Concurrent values</h3>
+          <ul class="sg-set__list">
+            <li :for={value <- @snapshot.mv_values} class="sg-set__chip">
+              {value}
+            </li>
+          </ul>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :mv_register and @snapshot.mv_timeline != [] do %>
+        <div id="sg-mv-timeline" class="sg-set sg-mv">
+          <h3 class="sg-card__title">Causal timeline</h3>
+          <ol class="sg-causal__list">
+            <li :for={entry <- @snapshot.mv_timeline} class={mv_entry_class(entry)}>
+              <div class="sg-causal__head">
+                <span class="sg-causal__dot">{mv_dot_label(entry)}</span>
+                <strong class="sg-causal__value">{entry.value}</strong>
+                <span class="sg-causal__state">{mv_entry_state(entry)}</span>
+              </div>
+              <p class="sg-causal__note">{mv_entry_note(entry)}</p>
+            </li>
+          </ol>
+          <p class="sg-causal__legend">
+            Active dots stay visible. Compacted dots remain in causal context.
+          </p>
+        </div>
+      <% end %>
+
+      <%= if @snapshot.mode == :map and @snapshot.map_fields != [] do %>
+        <div class="sg-set">
+          <h3 class="sg-card__title">Service status</h3>
+          <ul class="sg-map__list">
+            <li :for={field <- @snapshot.map_fields} class="sg-map__row">
+              <span class="sg-map__key">{field.key}</span>
+              <span class="sg-map__value">{field.value}</span>
+            </li>
+          </ul>
+        </div>
+      <% end %>
     </section>
     """
   end
@@ -617,6 +1314,16 @@ defmodule SignalGardenWeb.GardenLiveHTML do
                   <%= cond do %>
                     <% entry.kind == :increment -> %>
                       node {entry.from} wrote +{entry.amount}
+                    <% entry.kind == :added -> %>
+                      node {entry.from} added "{entry.element}"
+                    <% entry.kind == :removed -> %>
+                      node {entry.from} removed "{entry.element}"
+                    <% entry.kind == :wrote -> %>
+                      node {entry.from} posted "{entry.value}"
+                    <% entry.kind == :put -> %>
+                      node {entry.from} set {entry.key} = {entry.value}
+                    <% entry.kind == :adjusted -> %>
+                      node {entry.from} adjusted {entry.amount}
                     <% entry.to -> %>
                       {entry.from} -> {entry.to} {log_label(entry.kind)}
                     <% true -> %>

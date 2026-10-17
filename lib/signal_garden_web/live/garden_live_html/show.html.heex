@@ -34,9 +34,21 @@
         drop_value={@drop_value}
         speed={@speed}
         fault_node={@fault_node}
+        fault_element={@fault_element}
+        pn_form={@pn_form}
+        map_keys={@map_keys}
+        fault_key={@fault_key}
+        link_edges={@link_edges}
+        link_edge={@link_edge}
         show_import={@show_import}
         import_json={@import_json}
       />
     </section>
+
+    <.comparison_panel
+      scenarios={@scenarios}
+      comparison_form={@comparison_form}
+      comparison={@comparison}
+    />
   </div>
 </Layouts.app>
