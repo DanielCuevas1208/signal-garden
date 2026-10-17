@@ -176,6 +176,92 @@ defmodule SignalGarden.Sim.CoreTest do
   end
 
   # ---------------------------------------------------------------------------
+  # link cuts
+  # ---------------------------------------------------------------------------
+
+  test "cutting a link drops every message across it and records the drop" do
+    state = Core.new(Scenarios.fetch(:line))
+    state = Core.command(state, {:cut, {1, 2}})
+    state = step_n(state, 400)
+
+    assert state.dropped > 0
+    assert :dropped_cut in Enum.map(state.event_log, & &1.kind)
+    assert MapSet.member?(state.link_cuts, {1, 2})
+  end
+
+  test "cutting the only link from the origin stalls convergence" do
+    scenario = %Scenario{Scenarios.line() | topology: SignalGarden.Sim.Topology.line(3)}
+    state = Core.new(scenario)
+    state = Core.command(state, {:cut, {1, 2}})
+    state = step_n(state, 4_000)
+
+    refute state.status == :converged
+    assert state.convergence_time == nil
+    assert MapSet.size(state.informed) == 1
+  end
+
+  test "healing a cut link lets the network converge again" do
+    scenario = %Scenario{Scenarios.line() | topology: SignalGarden.Sim.Topology.line(3)}
+
+    state =
+      Core.new(scenario)
+      |> Core.command({:cut, {1, 2}})
+      |> step_n(1_000)
+      |> Core.command({:heal_link, {1, 2}})
+      |> run_to_converge()
+
+    assert state.status == :converged
+    refute MapSet.member?(state.link_cuts, {1, 2})
+    assert MapSet.size(state.informed) == 3
+  end
+
+  test "toggling a link flips it between cut and healed" do
+    state = Core.new(Scenarios.fetch(:line))
+
+    state = Core.command(state, {:toggle_link_cut, {2, 1}})
+    assert MapSet.member?(state.link_cuts, {1, 2})
+
+    state = Core.command(state, {:toggle_link_cut, {1, 2}})
+    refute MapSet.member?(state.link_cuts, {1, 2})
+  end
+
+  test "merge heals link cuts and partition groups together" do
+    state = Core.new(Scenarios.fetch(:line))
+
+    state =
+      state
+      |> Core.command({:cut, {1, 2}})
+      |> Core.command({:cut, {3, 4}})
+      |> Core.command({:assign, 5, 1})
+      |> Core.command({:merge, :all})
+
+    assert state.link_cuts == MapSet.new()
+    assert state.partitions == %{}
+  end
+
+  test "a snapshot edge carries the cut flag" do
+    state = Core.new(Scenarios.fetch(:line))
+    state = Core.command(state, {:cut, {1, 2}})
+    snap = Core.snapshot(state)
+
+    edge = Enum.find(snap.edges, &(&1.a == 1 and &1.b == 2))
+    assert edge.cut == true
+
+    healthy = Enum.find(snap.edges, &(&1.a == 2 and &1.b == 3))
+    assert healthy.cut == false
+  end
+
+  test "the broken link scenario isolates the origin segment and then converges" do
+    a = run_to_completion(:cut)
+    b = run_to_completion(:cut)
+
+    assert a.status == :converged
+    assert a.dropped > 0
+    assert a.convergence_time == b.convergence_time
+    assert a.event_log == b.event_log
+  end
+
+  # ---------------------------------------------------------------------------
   # delay and loss
   # ---------------------------------------------------------------------------
 
