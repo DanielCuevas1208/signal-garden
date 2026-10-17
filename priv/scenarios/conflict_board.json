@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "id": "conflict_board",
+  "name": "Conflict board",
+  "description": "Three nodes keep concurrent notices until a later write observes them.",
+  "seed": 77,
+  "origin": 1,
+  "latest_value": 0,
+  "delay_ms": [
+    35,
+    65
+  ],
+  "drop_prob": 0.0,
+  "gossip_interval_ms": 80,
+  "partitions": {},
+  "link_cuts": [],
+  "fault_schedule": [
+    {
+      "at": 100,
+      "action": "write",
+      "node": 1,
+      "value": "blue",
+      "label": "Node 1 writes blue"
+    },
+    {
+      "at": 100,
+      "action": "write",
+      "node": 3,
+      "value": "green",
+      "label": "Node 3 writes green"
+    }
+  ],
+  "map_keys": [],
+  "mode": "mv_register",
+  "topology": {
+    "id": "line",
+    "label": "line 3",
+    "nodes": [
+      1,
+      2,
+      3
+    ],
+    "edges": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ]
+    ],
+    "layout": {
+      "1": [
+        0.15,
+        0.5
+      ],
+      "2": [
+        0.5,
+        0.5
+      ],
+      "3": [
+        0.85,
+        0.5
+      ]
+    }
+  }
+}
