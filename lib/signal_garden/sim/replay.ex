@@ -16,6 +16,8 @@ defmodule SignalGarden.Sim.Replay do
 
   @budget_events 200
   @max_batches 10_000
+  @counterexample_events 200
+  @counterexample_event_limit 12
 
   @type summary :: %{
           scenario: String.t(),
@@ -52,6 +54,30 @@ defmodule SignalGarden.Sim.Replay do
         }
 
   @type event :: map()
+
+  @type trace_artifact :: %{
+          format: 1,
+          scenario: map(),
+          summary: summary(),
+          event_count: non_neg_integer(),
+          events: [event()]
+        }
+
+  @type counterexample :: %{
+          format: 1,
+          scenario: %{id: atom(), name: String.t(), mode: Core.mode(), seed: integer()},
+          status: :stalled,
+          replay_status: Core.status(),
+          replay_steps: non_neg_integer(),
+          isolated_nodes: [pos_integer()],
+          reached_nodes: [pos_integer()],
+          barriers: %{
+            partitions: list(%{node: pos_integer(), group: integer()}),
+            link_cuts: list([pos_integer()])
+          },
+          blocking_event_count: non_neg_integer(),
+          blocking_events: [event()]
+        }
 
   @type check :: %{
           scenario: String.t(),
@@ -214,6 +240,99 @@ defmodule SignalGarden.Sim.Replay do
   def event_trace(target), do: target |> run() |> recent_trace()
 
   @doc """
+  Return the complete ordered event trace for a scenario.
+
+  This opt-in path keeps the interactive rolling window unchanged.
+  """
+  @spec full_event_trace(Scenario.t() | atom() | String.t() | Path.t()) :: [event()]
+  def full_event_trace(target), do: target |> full_core() |> full_trace()
+
+  @doc """
+  Build a portable trace artifact with deterministic summary metadata.
+  """
+  @spec trace_artifact(Scenario.t() | atom() | String.t() | Path.t()) :: trace_artifact()
+  def trace_artifact(target) do
+    core = full_core(target)
+    events = full_trace(core)
+
+    %{
+      format: 1,
+      scenario: scenario_metadata(core.scenario),
+      summary: summarize(core),
+      event_count: length(events),
+      events: events
+    }
+  end
+
+  @doc "Write a complete ordered trace artifact as formatted JSON."
+  @spec export_trace(Scenario.t() | atom() | String.t() | Path.t(), Path.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def export_trace(target, path) when is_binary(path) do
+    artifact = trace_artifact(target)
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, json} <- Jason.encode(artifact, pretty: true),
+         :ok <- File.write(path, json <> "\n") do
+      {:ok, artifact.event_count}
+    end
+  end
+
+  @doc "Return compact evidence for a run blocked by a permanent barrier."
+  @spec counterexample(Scenario.t() | atom() | String.t() | Path.t()) ::
+          {:ok, counterexample()} | {:error, :not_stalled}
+  def counterexample(target) do
+    core = target |> resolve_target() |> run_for_counterexample()
+    isolated_nodes = isolated_nodes(core)
+
+    if isolated_nodes == [] do
+      {:error, :not_stalled}
+    else
+      blocking_events =
+        core
+        |> full_trace()
+        |> Enum.filter(&blocking_event?/1)
+
+      {:ok,
+       %{
+         format: 1,
+         scenario: scenario_metadata(core.scenario),
+         status: :stalled,
+         replay_status: core.status,
+         replay_steps: core.steps,
+         isolated_nodes: isolated_nodes,
+         reached_nodes: core.informed |> MapSet.to_list() |> Enum.sort(),
+         barriers: %{
+           partitions:
+             core.partitions
+             |> Enum.sort()
+             |> Enum.map(fn {node, group} -> %{node: node, group: group} end),
+           link_cuts:
+             core.link_cuts
+             |> MapSet.to_list()
+             |> Enum.sort()
+             |> Enum.map(fn {a, b} -> [a, b] end)
+         },
+         blocking_event_count: length(blocking_events),
+         blocking_events: Enum.take(blocking_events, @counterexample_event_limit)
+       }}
+    end
+  end
+
+  @doc "Write compact stalled-run evidence as formatted JSON."
+  @spec export_counterexample(
+          Scenario.t() | atom() | String.t() | Path.t(),
+          Path.t()
+        ) :: {:ok, non_neg_integer()} | {:error, term()}
+  def export_counterexample(target, path) when is_binary(path) do
+    with {:ok, evidence} <- counterexample(target),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, json} <- Jason.encode(evidence, pretty: true),
+         :ok <- File.write(path, json <> "\n") do
+      {:ok, evidence.blocking_event_count}
+    end
+  end
+
+  @doc """
   Run a scenario twice and compare the outcomes.
 
   Returns a map with one boolean per compared field. A false field means the
@@ -275,6 +394,10 @@ defmodule SignalGarden.Sim.Replay do
     end
   end
 
+  defp resolve_target(%Scenario{} = scenario), do: scenario
+  defp resolve_target(id) when is_atom(id), do: fetch_or_raise(id)
+  defp resolve_target(target) when is_binary(target), do: resolve_or_raise(target)
+
   defp fetch_or_raise(id) do
     case Scenarios.fetch(id) do
       nil -> raise ArgumentError, "unknown scenario id: #{inspect(id)}"
@@ -303,14 +426,10 @@ defmodule SignalGarden.Sim.Replay do
   end
 
   defp id_from_string(target) do
-    atom = String.to_existing_atom(target)
-
-    case Scenarios.fetch(atom) do
+    case Enum.find(Scenarios.catalog(), fn scenario -> Atom.to_string(scenario.id) == target end) do
       nil -> :error
       scenario -> {:ok, scenario}
     end
-  rescue
-    ArgumentError -> :error
   end
 
   @doc "Load a scenario by id, raising for unknown ids."
@@ -321,9 +440,21 @@ defmodule SignalGarden.Sim.Replay do
   # internal
   # ---------------------------------------------------------------------------
 
-  defp run_to_completion(%Scenario{} = scenario) do
+  defp full_core(target), do: target |> resolve_target() |> run_to_completion(trace: :full)
+
+  defp run_for_counterexample(%Scenario{} = scenario) do
+    core =
+      scenario
+      |> Core.new(trace: :full)
+      |> Core.command({:set_status, :running})
+
+    {core, _processed} = Core.step(core, @counterexample_events)
+    core
+  end
+
+  defp run_to_completion(%Scenario{} = scenario, opts \\ []) do
     scenario
-    |> Core.new()
+    |> Core.new(opts)
     |> Core.command({:set_status, :running})
     |> then(fn state ->
       Enum.reduce_while(1..@max_batches//1, state, fn _, acc ->
@@ -337,6 +468,55 @@ defmodule SignalGarden.Sim.Replay do
       end)
     end)
   end
+
+  defp full_trace(%Core{full_event_log: events}) when is_list(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.map(&normalize_event/1)
+  end
+
+  defp scenario_metadata(%Scenario{} = scenario) do
+    %{
+      id: scenario.id,
+      name: scenario.name,
+      mode: scenario.mode,
+      seed: scenario.seed
+    }
+  end
+
+  defp blocking_event?(%{kind: kind}) when kind in [:dropped_cut, :dropped_partition], do: true
+  defp blocking_event?(_event), do: false
+
+  defp isolated_nodes(%Core{} = core) do
+    reachable = reachable_nodes(core, [core.origin], MapSet.new())
+
+    core.topology.nodes
+    |> Enum.reject(&MapSet.member?(reachable, &1))
+    |> Enum.sort()
+  end
+
+  defp reachable_nodes(_core, [], visited), do: visited
+
+  defp reachable_nodes(core, [node | rest], visited) do
+    if MapSet.member?(visited, node) do
+      reachable_nodes(core, rest, visited)
+    else
+      neighbours =
+        core.topology.adjacency
+        |> Map.get(node, [])
+        |> Enum.reject(&barrier?(core, node, &1))
+
+      reachable_nodes(core, neighbours ++ rest, MapSet.put(visited, node))
+    end
+  end
+
+  defp barrier?(core, from, to) do
+    partitioned = Map.get(core.partitions, from, 0) != Map.get(core.partitions, to, 0)
+    cut = MapSet.member?(core.link_cuts, edge_key(from, to))
+    partitioned or cut
+  end
+
+  defp edge_key(a, b), do: if(a <= b, do: {a, b}, else: {b, a})
 
   defp recent_trace(%Core{} = core) do
     core.event_log

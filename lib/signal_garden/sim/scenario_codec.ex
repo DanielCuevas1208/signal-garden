@@ -11,7 +11,7 @@ defmodule SignalGarden.Sim.ScenarioCodec do
 
   @format 1
 
-  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board ledger imported)a
+  @catalog_ids ~w(line ring grid random split churn lossy crash counter cut guest_list roster bulletin service_board conflict_board ledger stalled imported)a
 
   @doc "Encode a scenario struct as pretty-printed JSON."
   @spec encode(Scenario.t()) :: String.t()

@@ -17,6 +17,9 @@ defmodule Mix.Tasks.SignalGarden.Replay do
       mix signal_garden.replay --json
       mix signal_garden.replay --json ring
       mix signal_garden.replay --trace ring
+      mix signal_garden.replay --export-trace tmp/ring-trace.json ring
+      mix signal_garden.replay --counterexample priv/scenarios/stalled.json
+      mix signal_garden.replay --export-counterexample tmp/stalled.json priv/scenarios/stalled.json
       mix signal_garden.replay --compare ring cut
       mix signal_garden.replay --check ring
       mix signal_garden.replay --check-all
@@ -26,6 +29,9 @@ defmodule Mix.Tasks.SignalGarden.Replay do
 
     * `--json` - print summaries as one JSON document
     * `--trace` - print the recent event trace as JSON
+    * `--export-trace PATH` - write the complete ordered trace to PATH
+    * `--counterexample` - print compact evidence for a stalled scenario
+    * `--export-counterexample PATH` - write stalled evidence to PATH
     * `--compare` - print paired summaries, metric deltas, and traces as JSON
     * `--check` - run a scenario twice and compare the outcomes
     * `--check-all` - run a determinism check for every catalog scenario
@@ -44,6 +50,9 @@ defmodule Mix.Tasks.SignalGarden.Replay do
   @switches [
     json: :boolean,
     trace: :boolean,
+    export_trace: :string,
+    counterexample: :boolean,
+    export_counterexample: :string,
     compare: :boolean,
     check: :boolean,
     check_all: :boolean,
@@ -74,6 +83,15 @@ defmodule Mix.Tasks.SignalGarden.Replay do
 
       opts[:check] ->
         run_check(positional)
+
+      opts[:export_trace] ->
+        run_export_trace(opts[:export_trace], positional)
+
+      opts[:counterexample] ->
+        run_counterexample(positional)
+
+      opts[:export_counterexample] ->
+        run_export_counterexample(opts[:export_counterexample], positional)
 
       opts[:trace] ->
         run_trace(positional)
@@ -136,6 +154,55 @@ defmodule Mix.Tasks.SignalGarden.Replay do
       end
 
     IO.puts(Jason.encode!(trace, pretty: true))
+  end
+
+  defp run_export_trace(path, targets) do
+    target =
+      case targets do
+        [] -> :line
+        [target] -> target
+        _ -> raise ArgumentError, "--export-trace accepts one scenario target"
+      end
+
+    case Replay.export_trace(target, path) do
+      {:ok, event_count} ->
+        IO.puts("wrote #{path} (#{event_count} events)")
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot write trace #{inspect(path)}: #{inspect(reason)}"
+    end
+  end
+
+  defp run_counterexample([target]) do
+    case Replay.counterexample(target) do
+      {:ok, evidence} ->
+        IO.puts(Jason.encode!(evidence, pretty: true))
+
+      {:error, :not_stalled} ->
+        raise ArgumentError, "scenario does not have an isolated counterexample"
+    end
+  end
+
+  defp run_counterexample(_targets) do
+    raise ArgumentError, "--counterexample expects exactly one scenario id or JSON file path"
+  end
+
+  defp run_export_counterexample(path, [target]) do
+    case Replay.export_counterexample(target, path) do
+      {:ok, event_count} ->
+        IO.puts("wrote #{path} (#{event_count} blocking events)")
+
+      {:error, :not_stalled} ->
+        raise ArgumentError, "scenario does not have an isolated counterexample"
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot write counterexample #{inspect(path)}: #{inspect(reason)}"
+    end
+  end
+
+  defp run_export_counterexample(_path, _targets) do
+    raise ArgumentError,
+          "--export-counterexample expects one scenario id or JSON file path"
   end
 
   defp run_check(targets) do

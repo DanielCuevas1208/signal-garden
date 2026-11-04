@@ -5,6 +5,7 @@ defmodule SignalGarden.Sim.ReplayTest do
   alias SignalGarden.Sim.Replay
 
   @sample_path Path.join([:code.priv_dir(:signal_garden), "scenarios", "ring.json"])
+  @stalled_path Path.join([:code.priv_dir(:signal_garden), "scenarios", "stalled.json"])
 
   describe "summaries/0" do
     test "returns one summary per catalog scenario" do
@@ -150,6 +151,86 @@ defmodule SignalGarden.Sim.ReplayTest do
       assert cut_drop != nil
       assert cut_drop.cut == true
       assert cut_drop.to != nil
+    end
+  end
+
+  describe "full_event_trace/1" do
+    test "retains a long run beyond the rolling window" do
+      recent = Replay.event_trace(:grid)
+      full = Replay.full_event_trace(:grid)
+
+      assert length(recent) == 80
+      assert length(full) > length(recent)
+      assert Enum.take(full, -length(recent)) == recent
+
+      assert Enum.chunk_every(full, 2, 1, :discard)
+             |> Enum.all?(fn [a, b] -> a.t <= b.t end)
+    end
+
+    test "exports ordered events with deterministic summary metadata" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "signal-garden-trace-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:ok, event_count} = Replay.export_trace(:grid, path)
+      artifact = path |> File.read!() |> Jason.decode!()
+      expected_events = Replay.full_event_trace(:grid)
+      summary = Replay.summarize(Replay.run(:grid))
+
+      assert artifact["format"] == 1
+      assert artifact["scenario"]["id"] == "grid"
+      assert artifact["event_count"] == event_count
+      assert artifact["event_count"] == length(expected_events)
+      assert artifact["events"] == Jason.decode!(Jason.encode!(expected_events))
+      assert artifact["summary"]["status"] == "converged"
+      assert artifact["summary"]["steps"] == summary.steps
+      assert artifact["summary"]["convergence_time"] == summary.convergence_time
+    end
+  end
+
+  describe "counterexample/1" do
+    test "identifies isolated nodes and blocking events" do
+      assert {:ok, evidence} = Replay.counterexample(@stalled_path)
+
+      assert evidence.status == :stalled
+      assert evidence.replay_status == :running
+      assert evidence.scenario.id == :stalled
+      assert evidence.isolated_nodes == [3, 4]
+      assert evidence.reached_nodes == [1, 2]
+      assert evidence.barriers.link_cuts == [[2, 3]]
+      assert evidence.blocking_event_count > 0
+      assert Enum.all?(evidence.blocking_events, &(&1.kind == :dropped_cut))
+    end
+
+    test "replaying the same scenario reproduces the same evidence" do
+      assert {:ok, first} = Replay.counterexample(@stalled_path)
+      assert {:ok, second} = Replay.counterexample(@stalled_path)
+
+      assert first == second
+      assert {:error, :not_stalled} = Replay.counterexample(:ring)
+    end
+
+    test "exports compact evidence without the full trace" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "signal-garden-counterexample-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:ok, event_count} = Replay.export_counterexample(@stalled_path, path)
+      evidence = path |> File.read!() |> Jason.decode!()
+
+      assert evidence["format"] == 1
+      assert evidence["status"] == "stalled"
+      assert evidence["isolated_nodes"] == [3, 4]
+      assert evidence["blocking_event_count"] == event_count
+      refute Map.has_key?(evidence, "events")
     end
   end
 
