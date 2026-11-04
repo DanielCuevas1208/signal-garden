@@ -193,6 +193,7 @@ defmodule SignalGarden.Sim.Core do
     if trace not in [:rolling, :full] do
       raise ArgumentError, "trace must be :rolling or :full"
     end
+
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
