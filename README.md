@@ -33,6 +33,8 @@ It places outcomes, work, and recent events side by side.
 - A live SVG graph, a convergence chart, and an event feed.
 - Causal-history compaction that removes resolved evidence without changing replicated values.
 - A headless replay tool that reproduces any run from the CLI.
+- An opt-in JSON artifact for every event in a replay.
+- A compact counterexample for a permanent partition or link cut.
 - A scenario comparison panel with paired outcomes and recent traces.
 
 ## Architecture
@@ -44,7 +46,7 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
-    replay.ex         # Headless runner and deterministic scenario comparison.
+    replay.ex         # Runner, comparison, trace artifacts, and counterexamples.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     multi_value_register.ex # Causal-dot merge rules and timeline evidence.
@@ -444,6 +446,9 @@ path to run a single scenario. Add an option to change the output:
 | --- | --- |
 | `--json` | One JSON document with a summary per scenario |
 | `--trace` | The recent event trace as JSON |
+| `--export-trace PATH` | The complete ordered trace and summary metadata |
+| `--counterexample` | Compact evidence for one stalled scenario |
+| `--export-counterexample PATH` | Write stalled evidence to a JSON file |
 | `--compare left right` | Paired summaries, deltas, and recent traces as JSON |
 | `--check` | A determinism check for one scenario |
 | `--check-all` | A determinism check for every scenario |
@@ -472,6 +477,59 @@ mix signal_garden.replay --compare ring cut | jq '{left: .left.id, right: .right
 ```
 
 The trace remains limited to the core's most recent 80 events.
+
+## Full trace export
+
+The control room keeps 80 recent events. The replay task can export the complete ordered trace.
+
+Run this command:
+
+```text
+mix signal_garden.replay --export-trace tmp/grid-trace.json grid
+```
+
+The task writes one JSON artifact and reports its event count.
+
+```text
+wrote tmp/grid-trace.json (564 events)
+```
+
+The artifact contains `format`, `scenario`, `summary`, `event_count`, and `events` fields.
+The `events` field uses oldest-first order.
+
+Use the artifact to compare event order with deterministic replay summaries.
+The default interactive trace remains bounded.
+
+## Stalled counterexamples
+
+The replay task can explain a permanent link cut or partition.
+
+Use this command:
+
+```text
+mix signal_garden.replay --counterexample priv/scenarios/stalled.json
+```
+
+The output identifies isolated nodes, reachable nodes, barriers, and blocking events.
+
+```json
+{
+  "status": "stalled",
+  "isolated_nodes": [3, 4],
+  "reached_nodes": [1, 2],
+  "barriers": {"link_cuts": [[2, 3]]},
+  "blocking_event_count": 20
+}
+```
+
+Write the same evidence to a file:
+
+```text
+mix signal_garden.replay --export-counterexample tmp/stalled.json priv/scenarios/stalled.json
+```
+
+The evidence stays compact. It includes up to twelve blocking events.
+Run the command again to reproduce the same stalled state.
 
 ## Status model
 
@@ -533,13 +591,14 @@ Run the full suite:
 mix test
 ```
 
-The suite has 231 tests. It covers the deterministic core and each CRDT.
+The suite has 240 tests. It covers the deterministic core and each CRDT.
 It covers topology, scenario codecs, the catalog, link cuts, the engine,
-the LiveView, scenario comparison, and headless replay.
+the LiveView, scenario comparison, headless replay, full trace export, and
+stalled counterexamples.
 Tests never sleep or read the wall clock. Each core test replays a scenario
 and checks the resulting state.
 
-All 231 tests pass in this checkout.
+All 240 tests pass in this checkout.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:
@@ -566,28 +625,13 @@ A debit does not erase an earlier credit.
 - The interface uses one SVG canvas, so very large graphs stay modest by design.
 - Persistence is out of scope: a restart reloads the default scenario.
 - Imported scenarios use a custom topology. They do not appear in the catalog list or comparison picker.
-- The event trace is a rolling window of the 80 most recent events, not the full run.
+- The event trace is a rolling window of the 80 most recent events.
+- Full trace export retains every event in memory during the opt-in replay.
+- Counterexamples inspect permanent barriers after a bounded deterministic replay.
 
 ## Roadmap
 
-Later releases can build on this core without changing the model.
-
-- **Scenario import and export.** Done. JSON files round-trip through the codec and the control room.
-- **Crash and restart.** Done. Nodes crash, drop state, and recover through the control room.
-- **Counters and CRDTs.** Done. The rumor now has a G-Counter sibling with scheduled and manual writes.
-- **Sets and CRDTs.** Done. A G-Set spreads a collection through the network with scheduled and manual adds.
-- **Headless replay tool.** Done. The `mix signal_garden.replay` task prints summaries, traces, and determinism checks from the CLI.
-- **Edge-level partitions.** Done. Cut and heal single links from the graph, the fault box, or a scenario file.
-- **Registers and CRDTs.** Done. The rumor now has an LWW register sibling with scheduled and manual writes.
-- **Maps and CRDTs.** Done. The rumor now has an LWW map sibling with scheduled and manual writes per key.
-- **Observed-remove sets.** Done. The Shared roster scenario models causal tags and concurrent add behavior.
-- **Multi-value registers.** Done. The Conflict board keeps concurrent writes visible and exposes causal-dot evidence.
-- **Richer conflict timeline.** Done. MV-register snapshots show active dots, resolved dots, and observed writes.
-- **Causal history compaction.** Done. Resolved timeline entries can be removed while causal context remains.
-- **More CRDTs.** Done. The Balance ledger adds a PN-counter with signed adjustments.
-- **Scenario comparison.** Done. Compare built-in deterministic traces side by side in the control room.
-- **Scriptable comparison output.** Done. `--compare left right` emits paired JSON evidence for scripts and CI.
-- **Full-run trace export.** Next: add an opt-in artifact for traces longer than the rolling interface window.
+Track milestone status, acceptance criteria, and verification commands in [ROADMAP.md](ROADMAP.md).
 
 ## License
 

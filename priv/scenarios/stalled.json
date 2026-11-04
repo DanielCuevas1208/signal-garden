@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "id": "stalled",
+  "name": "Permanent cut",
+  "description": "A permanent link cut isolates nodes 3 and 4 from the origin.",
+  "seed": 123,
+  "origin": 1,
+  "latest_value": 99,
+  "delay_ms": [20, 20],
+  "drop_prob": 0.0,
+  "gossip_interval_ms": 80,
+  "partitions": {},
+  "link_cuts": [[2, 3]],
+  "fault_schedule": [],
+  "map_keys": [],
+  "mode": "rumor",
+  "topology": {
+    "id": "line",
+    "label": "line 4",
+    "nodes": [1, 2, 3, 4],
+    "edges": [[1, 2], [2, 3], [3, 4]],
+    "layout": {
+      "1": [0.15, 0.5],
+      "2": [0.38, 0.5],
+      "3": [0.62, 0.5],
+      "4": [0.85, 0.5]
+    }
+  }
+}

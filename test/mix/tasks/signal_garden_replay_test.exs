@@ -5,6 +5,8 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
 
   alias Mix.Tasks.SignalGarden.Replay
 
+  @stalled_path Path.join([:code.priv_dir(:signal_garden), "scenarios", "stalled.json"])
+
   test "prints a summary table for a single scenario" do
     output = capture_io(fn -> Replay.run(["ring"]) end)
 
@@ -37,6 +39,54 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
     assert Enum.all?(trace, &Map.has_key?(&1, "kind"))
   end
 
+  test "exports a complete trace artifact" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "signal-garden-task-trace-#{System.unique_integer([:positive])}.json"
+      )
+
+    on_exit(fn -> File.rm(path) end)
+
+    output = capture_io(fn -> Replay.run(["--export-trace", path, "grid"]) end)
+    artifact = path |> File.read!() |> Jason.decode!()
+
+    assert output =~ "wrote #{path}"
+    assert artifact["scenario"]["id"] == "grid"
+    assert artifact["event_count"] > 80
+    assert length(artifact["events"]) == artifact["event_count"]
+  end
+
+  test "prints a compact stalled counterexample" do
+    output = capture_io(fn -> Replay.run(["--counterexample", @stalled_path]) end)
+    evidence = Jason.decode!(output)
+
+    assert evidence["status"] == "stalled"
+    assert evidence["isolated_nodes"] == [3, 4]
+    refute Map.has_key?(evidence, "events")
+  end
+
+  test "exports a stalled counterexample artifact" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "signal-garden-task-counterexample-#{System.unique_integer([:positive])}.json"
+      )
+
+    on_exit(fn -> File.rm(path) end)
+
+    output =
+      capture_io(fn ->
+        Replay.run(["--export-counterexample", path, @stalled_path])
+      end)
+
+    evidence = path |> File.read!() |> Jason.decode!()
+
+    assert output =~ "wrote #{path}"
+    assert evidence["status"] == "stalled"
+    assert evidence["blocking_event_count"] > 0
+  end
+
   test "emits paired summaries, deltas, and traces as JSON" do
     output = capture_io(fn -> Replay.run(["--compare", "ring", "cut"]) end)
 
@@ -52,6 +102,8 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
     output = capture_io(fn -> Replay.run(["--help"]) end)
 
     assert output =~ "--compare"
+    assert output =~ "--export-trace"
+    assert output =~ "--counterexample"
     assert output =~ "exactly two"
   end
 

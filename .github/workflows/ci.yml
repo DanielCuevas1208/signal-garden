@@ -60,5 +60,16 @@ jobs:
       - name: Run tests
         run: mix test
 
+      - name: Verify full trace export
+        run: |
+          mkdir -p tmp
+          mix signal_garden.replay --export-trace tmp/grid-trace.json grid
+          test -s tmp/grid-trace.json
+
+      - name: Verify stalled counterexample
+        run: |
+          mix signal_garden.replay --export-counterexample tmp/stalled-counterexample.json priv/scenarios/stalled.json
+          test -s tmp/stalled-counterexample.json
+
       - name: Verify headless replay determinism
         run: mix signal_garden.replay --check-all

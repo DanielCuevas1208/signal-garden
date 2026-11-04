@@ -24,6 +24,21 @@ defmodule SignalGarden.Sim.CoreTest do
     assert a.event_log == b.event_log
   end
 
+  test "full trace capture keeps the rolling window bounded" do
+    rolling = run_to_completion(:grid)
+
+    full =
+      Scenarios.fetch(:grid)
+      |> Core.new(trace: :full)
+      |> run_to_converge()
+
+    assert length(rolling.event_log) == rolling.log_size
+    assert length(full.event_log) == full.log_size
+    assert length(full.full_event_log) > full.log_size
+    assert Enum.take(full.full_event_log, full.log_size) == full.event_log
+    refute Map.has_key?(Core.snapshot(full), :full_event_log)
+  end
+
   test "different seeds produce different convergence traces" do
     a = run_to_completion(:ring)
 

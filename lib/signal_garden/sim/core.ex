@@ -117,7 +117,7 @@ defmodule SignalGarden.Sim.Core do
 
   @enforce_keys [:scenario]
 
-  @derive {Inspect, except: [:rng]}
+  @derive {Inspect, except: [:rng, :full_event_log]}
   defstruct(
     scenario: nil,
     topology: nil,
@@ -166,6 +166,7 @@ defmodule SignalGarden.Sim.Core do
     informed: MapSet.new(),
     history: [],
     event_log: [],
+    full_event_log: nil,
     edge_activity: %{},
     status: :idle,
     steps: 0,
@@ -180,8 +181,18 @@ defmodule SignalGarden.Sim.Core do
   # construction
   # ---------------------------------------------------------------------------
 
-  @doc "Build a fresh core state from a scenario struct."
-  def new(%SignalGarden.Sim.Scenario{} = scenario) do
+  @doc """
+  Build a fresh core state from a scenario struct.
+
+  The default `:rolling` trace keeps the interactive event window bounded.
+  Pass `trace: :full` to retain every event for an export.
+  """
+  def new(%SignalGarden.Sim.Scenario{} = scenario, opts \\ []) do
+    trace = Keyword.get(opts, :trace, :rolling)
+
+    if trace not in [:rolling, :full] do
+      raise ArgumentError, "trace must be :rolling or :full"
+    end
     topology = scenario.topology
     nodes = build_nodes(topology, scenario)
     rng = :rand.seed_s(:exsss, scenario.seed)
@@ -191,6 +202,7 @@ defmodule SignalGarden.Sim.Core do
       topology: topology,
       nodes: nodes,
       rng: rng,
+      full_event_log: if(trace == :full, do: [], else: nil),
       origin: scenario.origin,
       latest: latest_for(scenario),
       mode: scenario.mode,
@@ -570,9 +582,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_increment(%__MODULE__{} = state, node, amount) do
@@ -585,9 +595,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_add(%__MODULE__{} = state, node, element) do
@@ -600,9 +608,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_remove(%__MODULE__{} = state, node, element) do
@@ -615,9 +621,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_write(%__MODULE__{} = state, node, value) do
@@ -630,9 +634,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_put(%__MODULE__{} = state, node, key, value) do
@@ -646,9 +648,7 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp log_adjust(%__MODULE__{} = state, node, amount) do
@@ -661,9 +661,19 @@ defmodule SignalGarden.Sim.Core do
       partition: false
     }
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
+  end
+
+  defp append_log(%__MODULE__{} = state, entry) do
+    event_log = Enum.take([entry | state.event_log], state.log_size)
+
+    full_event_log =
+      case state.full_event_log do
+        nil -> nil
+        log -> [entry | log]
+      end
+
+    %{state | event_log: event_log, full_event_log: full_event_log}
   end
 
   # ---------------------------------------------------------------------------
@@ -1515,9 +1525,7 @@ defmodule SignalGarden.Sim.Core do
 
     entry = Map.merge(entry, Map.new(extra))
 
-    log = [entry | state.event_log]
-    log = Enum.take(log, state.log_size)
-    %{state | event_log: log}
+    append_log(state, entry)
   end
 
   defp tap_edge(%__MODULE__{} = state, key, kind) do
