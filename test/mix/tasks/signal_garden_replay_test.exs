@@ -39,6 +39,24 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
     assert Enum.all?(trace, &Map.has_key?(&1, "kind"))
   end
 
+  test "verifies an exported trace artifact" do
+    trace_path =
+      Path.join(
+        System.tmp_dir!(),
+        "signal-garden-task-verify-#{System.unique_integer([:positive])}.json"
+      )
+
+    on_exit(fn -> File.rm(trace_path) end)
+
+    capture_io(fn -> Replay.run(["--export-trace", trace_path, "line"]) end)
+
+    output = capture_io(fn -> Replay.run(["--verify-trace", trace_path]) end)
+
+    assert output =~ "ok"
+    assert output =~ "line"
+    assert output =~ "trace verified"
+  end
+
   test "exports a complete trace artifact" do
     path =
       Path.join(
@@ -104,6 +122,7 @@ defmodule Mix.Tasks.SignalGarden.ReplayTest do
     assert output =~ "--compare"
     assert output =~ "--export-trace"
     assert output =~ "--counterexample"
+    assert output =~ "--verify-trace"
     assert output =~ "exactly two"
   end
 

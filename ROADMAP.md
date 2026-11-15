@@ -87,8 +87,6 @@ Status values: Complete, In progress, Planned, and Blocked.
   - Verify: `mix test test/signal_garden/sim/core_test.exs test/signal_garden/sim/replay_test.exs`
   - Demo: `mix signal_garden.replay --export-trace tmp/grid-trace.json grid`
 
-## Current release
-
 ### `convergence-counterexample` — Complete
 
 The replay task explains a permanent barrier that blocks convergence.
@@ -110,9 +108,9 @@ mix signal_garden.replay --export-counterexample tmp/stalled.json priv/scenarios
 
 The README includes sample counterexample output.
 
-## Future releases
+## Current release
 
-### `trace-verifier` — Planned
+### `trace-verifier` — Complete
 
 Outcome: Verify a trace artifact against a fresh deterministic replay.
 
@@ -124,7 +122,16 @@ Acceptance:
 - Compare the stored summary with replay output.
 - Return a non-zero status for altered evidence.
 
-Verify: `mix test test/mix/tasks/signal_garden_replay_test.exs`
+Verify:
+
+```text
+mix test test/signal_garden/sim/replay_test.exs
+mix test test/mix/tasks/signal_garden_replay_test.exs
+mix signal_garden.replay --export-trace tmp/grid-trace.json grid
+mix signal_garden.replay --verify-trace tmp/grid-trace.json
+```
+
+## Future releases
 
 ### `streaming-trace-export` — Planned
 
@@ -139,5 +146,19 @@ Acceptance:
 - Preserve deterministic event order.
 
 Verify: `mix test test/signal_garden/sim/replay_test.exs`
+
+### `counterexample-verifier` — Planned
+
+Outcome: Verify a stalled counterexample against a fresh replay.
+
+Bounded deliverable: Add a `--verify-counterexample PATH` command.
+
+Acceptance:
+
+- Check artifact format and barrier fields.
+- Compare isolated nodes with a fresh stalled replay.
+- Return a non-zero status for altered evidence.
+
+Verify: `mix test test/mix/tasks/signal_garden_replay_test.exs`
 
 Blocked milestones: None.
