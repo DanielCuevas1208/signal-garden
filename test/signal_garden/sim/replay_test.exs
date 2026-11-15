@@ -192,6 +192,72 @@ defmodule SignalGarden.Sim.ReplayTest do
     end
   end
 
+  describe "verify_trace/1" do
+    test "accepts a trace artifact exported from the same scenario" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "signal-garden-verify-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:ok, _count} = Replay.export_trace(:grid, path)
+      assert {:ok, report} = Replay.verify_trace(path)
+
+      assert report.scenario == "grid"
+      assert report.event_count > 80
+      assert report.format
+      assert report.event_count_match
+      assert report.event_order
+      assert report.summary
+    end
+
+    test "rejects altered event order" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "signal-garden-verify-bad-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:ok, _} = Replay.export_trace(:ring, path)
+
+      artifact =
+        path
+        |> File.read!()
+        |> Jason.decode!()
+        |> then(fn map ->
+          [first | rest] = map["events"]
+          Map.put(map, "events", rest ++ [first])
+        end)
+
+      File.write!(path, Jason.encode!(artifact))
+
+      assert {:error, {:mismatch, report}} = Replay.verify_trace(path)
+      refute report.event_order
+      assert report.summary
+    end
+
+    test "rejects unsupported format versions" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "signal-garden-verify-format-#{System.unique_integer([:positive])}.json"
+        )
+
+      on_exit(fn -> File.rm(path) end)
+
+      File.write!(
+        path,
+        Jason.encode!(%{"format" => 9, "scenario" => %{"id" => "grid"}, "events" => []})
+      )
+
+      assert {:error, {:unsupported_format, 9}} = Replay.verify_trace(path)
+    end
+  end
+
   describe "counterexample/1" do
     test "identifies isolated nodes and blocking events" do
       assert {:ok, evidence} = Replay.counterexample(@stalled_path)

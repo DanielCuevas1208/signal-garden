@@ -66,6 +66,9 @@ jobs:
           mix signal_garden.replay --export-trace tmp/grid-trace.json grid
           test -s tmp/grid-trace.json
 
+      - name: Verify trace artifact
+        run: mix signal_garden.replay --verify-trace tmp/grid-trace.json
+
       - name: Verify stalled counterexample
         run: |
           mix signal_garden.replay --export-counterexample tmp/stalled-counterexample.json priv/scenarios/stalled.json

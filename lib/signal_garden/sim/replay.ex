@@ -63,6 +63,15 @@ defmodule SignalGarden.Sim.Replay do
           events: [event()]
         }
 
+  @type verify_trace :: %{
+          scenario: String.t(),
+          event_count: non_neg_integer(),
+          format: boolean(),
+          event_count_match: boolean(),
+          event_order: boolean(),
+          summary: boolean()
+        }
+
   @type counterexample :: %{
           format: 1,
           scenario: %{id: atom(), name: String.t(), mode: Core.mode(), seed: integer()},
@@ -274,6 +283,30 @@ defmodule SignalGarden.Sim.Replay do
          {:ok, json} <- Jason.encode(artifact, pretty: true),
          :ok <- File.write(path, json <> "\n") do
       {:ok, artifact.event_count}
+    end
+  end
+
+  @doc """
+  Check a trace artifact against a fresh deterministic replay.
+
+  The function validates `format`, event order, event count, and summary fields.
+  It returns `{:error, {:mismatch, report}}` when stored evidence differs.
+  """
+  @spec verify_trace(Path.t()) :: {:ok, verify_trace()} | {:error, term()}
+  def verify_trace(path) when is_binary(path) do
+    with {:ok, json} <- File.read(path),
+         {:ok, stored} <- Jason.decode(json),
+         {:ok, scenario_id} <- artifact_scenario_id(stored),
+         :ok <- artifact_format_ok(stored),
+         :ok <- artifact_events_ok(stored) do
+      fresh = trace_artifact(scenario_id)
+      report = verify_trace_report(stored, fresh)
+
+      if verify_trace_ok?(report) do
+        {:ok, report}
+      else
+        {:error, {:mismatch, report}}
+      end
     end
   end
 
@@ -550,4 +583,47 @@ defmodule SignalGarden.Sim.Replay do
   defp format_error({:missing_format, _}), do: "the file is missing a format version"
   defp format_error({:unsupported_format, version}), do: "unsupported format version #{version}"
   defp format_error(reason), do: inspect(reason)
+
+  defp artifact_scenario_id(%{"scenario" => %{"id" => id}}) when is_binary(id) do
+    case Enum.find(Scenarios.catalog(), &(Atom.to_string(&1.id) == id)) do
+      %Scenario{id: scenario_id} -> {:ok, scenario_id}
+      nil -> {:error, :unknown_scenario}
+    end
+  end
+
+  defp artifact_scenario_id(_), do: {:error, :missing_scenario}
+
+  defp artifact_format_ok(%{"format" => 1}), do: :ok
+  defp artifact_format_ok(%{"format" => version}), do: {:error, {:unsupported_format, version}}
+  defp artifact_format_ok(_), do: {:error, :missing_format}
+
+  defp artifact_events_ok(%{"events" => events, "event_count" => count})
+       when is_list(events) and is_integer(count) and count == length(events),
+       do: :ok
+
+  defp artifact_events_ok(%{"events" => events}) when is_list(events),
+    do: {:error, :event_count_mismatch}
+
+  defp artifact_events_ok(_), do: {:error, :missing_events}
+
+  defp verify_trace_report(stored, fresh) do
+    stored_events = Map.fetch!(stored, "events")
+    fresh_events = Jason.decode!(Jason.encode!(fresh.events))
+    stored_summary = Map.fetch!(stored, "summary")
+    fresh_summary = Jason.decode!(Jason.encode!(fresh.summary))
+    count = Map.fetch!(stored, "event_count")
+
+    %{
+      scenario: fresh.scenario.id |> Atom.to_string(),
+      event_count: count,
+      format: true,
+      event_count_match: count == fresh.event_count,
+      event_order: stored_events == fresh_events,
+      summary: stored_summary == fresh_summary
+    }
+  end
+
+  defp verify_trace_ok?(report) do
+    report.format and report.event_count_match and report.event_order and report.summary
+  end
 end

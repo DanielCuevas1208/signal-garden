@@ -35,6 +35,7 @@ It places outcomes, work, and recent events side by side.
 - A headless replay tool that reproduces any run from the CLI.
 - An opt-in JSON artifact for every event in a replay.
 - A compact counterexample for a permanent partition or link cut.
+- A trace verifier that checks exported artifacts against fresh replays.
 - A scenario comparison panel with paired outcomes and recent traces.
 
 ## Architecture
@@ -46,7 +47,7 @@ lib/signal_garden/
   sim/
     core.ex           # Pure, side-effect-free state machine. Owns the event queue.
     engine.ex         # GenServer that drives the core and broadcasts snapshots.
-    replay.ex         # Runner, comparison, trace artifacts, and counterexamples.
+    replay.ex         # Runner, comparison, trace artifacts, verification, and counterexamples.
     scenario.ex       # Data shape for one run: topology, seed, faults, conditions.
     scenario_codec.ex # JSON import and export for scenarios.
     multi_value_register.ex # Causal-dot merge rules and timeline evidence.
@@ -449,6 +450,7 @@ path to run a single scenario. Add an option to change the output:
 | `--export-trace PATH` | The complete ordered trace and summary metadata |
 | `--counterexample` | Compact evidence for one stalled scenario |
 | `--export-counterexample PATH` | Write stalled evidence to a JSON file |
+| `--verify-trace PATH` | Check a trace artifact against a fresh replay |
 | `--compare left right` | Paired summaries, deltas, and recent traces as JSON |
 | `--check` | A determinism check for one scenario |
 | `--check-all` | A determinism check for every scenario |
@@ -499,6 +501,27 @@ The `events` field uses oldest-first order.
 
 Use the artifact to compare event order with deterministic replay summaries.
 The default interactive trace remains bounded.
+
+## Trace verification
+
+The replay task can confirm that a stored artifact matches a fresh replay.
+
+Run these commands:
+
+```text
+mix signal_garden.replay --export-trace tmp/grid-trace.json grid
+mix signal_garden.replay --verify-trace tmp/grid-trace.json
+```
+
+A successful check prints one line:
+
+```text
+ok      grid (564 events, trace verified)
+```
+
+The task checks format, event count, event order, and summary fields.
+It exits with a non-zero status when evidence was altered.
+The CI workflow runs this check after each export step.
 
 ## Stalled counterexamples
 
@@ -591,14 +614,12 @@ Run the full suite:
 mix test
 ```
 
-The suite has 240 tests. It covers the deterministic core and each CRDT.
+The suite covers the deterministic core and each CRDT.
 It covers topology, scenario codecs, the catalog, link cuts, the engine,
-the LiveView, scenario comparison, headless replay, full trace export, and
-stalled counterexamples.
+the LiveView, scenario comparison, headless replay, full trace export,
+trace verification, and stalled counterexamples.
 Tests never sleep or read the wall clock. Each core test replays a scenario
 and checks the resulting state.
-
-All 240 tests pass in this checkout.
 
 Run the precommit alias before you finish a change. It compiles, formats, and
 tests the project in one pass:

@@ -20,6 +20,7 @@ defmodule Mix.Tasks.SignalGarden.Replay do
       mix signal_garden.replay --export-trace tmp/ring-trace.json ring
       mix signal_garden.replay --counterexample priv/scenarios/stalled.json
       mix signal_garden.replay --export-counterexample tmp/stalled.json priv/scenarios/stalled.json
+      mix signal_garden.replay --verify-trace tmp/grid-trace.json
       mix signal_garden.replay --compare ring cut
       mix signal_garden.replay --check ring
       mix signal_garden.replay --check-all
@@ -32,6 +33,7 @@ defmodule Mix.Tasks.SignalGarden.Replay do
     * `--export-trace PATH` - write the complete ordered trace to PATH
     * `--counterexample` - print compact evidence for a stalled scenario
     * `--export-counterexample PATH` - write stalled evidence to PATH
+    * `--verify-trace PATH` - check a trace artifact against a fresh replay
     * `--compare` - print paired summaries, metric deltas, and traces as JSON
     * `--check` - run a scenario twice and compare the outcomes
     * `--check-all` - run a determinism check for every catalog scenario
@@ -53,6 +55,7 @@ defmodule Mix.Tasks.SignalGarden.Replay do
     export_trace: :string,
     counterexample: :boolean,
     export_counterexample: :string,
+    verify_trace: :string,
     compare: :boolean,
     check: :boolean,
     check_all: :boolean,
@@ -92,6 +95,9 @@ defmodule Mix.Tasks.SignalGarden.Replay do
 
       opts[:export_counterexample] ->
         run_export_counterexample(opts[:export_counterexample], positional)
+
+      opts[:verify_trace] ->
+        run_verify_trace(opts[:verify_trace])
 
       opts[:trace] ->
         run_trace(positional)
@@ -203,6 +209,26 @@ defmodule Mix.Tasks.SignalGarden.Replay do
   defp run_export_counterexample(_path, _targets) do
     raise ArgumentError,
           "--export-counterexample expects one scenario id or JSON file path"
+  end
+
+  defp run_verify_trace(path) do
+    case Replay.verify_trace(path) do
+      {:ok, report} ->
+        IO.puts("ok      #{report.scenario} (#{report.event_count} events, trace verified)")
+
+      {:error, {:mismatch, report}} ->
+        mismatched =
+          for {field, value} <- report,
+              field not in [:scenario, :event_count] and value == false,
+              do: field
+
+        Mix.shell().error("Trace verification failed (#{Enum.join(mismatched, ", ")}): #{path}")
+
+        exit({:shutdown, 1})
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot verify trace #{inspect(path)}: #{inspect(reason)}"
+    end
   end
 
   defp run_check(targets) do
